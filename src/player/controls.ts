@@ -175,8 +175,9 @@ export class Controls {
       const clamp = (v: number, m: number) => Math.max(-m, Math.min(m, v));
       const target = window.innerWidth > window.innerHeight ? e.beta - this.gyroBaseB : e.gamma - this.gyroBaseG;
       const targetP = window.innerWidth > window.innerHeight ? e.gamma - this.gyroBaseG : e.beta - this.gyroBaseB;
-      this.gyroYaw += (clamp(-target * 0.006, 0.12) - this.gyroYaw) * 0.12;
-      this.gyroPitch += (clamp(-targetP * 0.004, 0.08) - this.gyroPitch) * 0.12;
+      // tilt left → look left, tilt up → look up (previously both inverted)
+      this.gyroYaw += (clamp(target * 0.006, 0.12) - this.gyroYaw) * 0.12;
+      this.gyroPitch += (clamp(targetP * 0.004, 0.08) - this.gyroPitch) * 0.12;
     });
   }
 
