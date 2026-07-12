@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Controls } from './controls';
 
-const WALK_SPEED = 2.5; // m/s. purposeful, but still an inspector, not a soldier.
+const WALK_SPEED = 3.1; // m/s. purposeful, but still an inspector, not a soldier.
 const EYE_HEIGHT = 1.62;
 const RADIUS = 0.32;
 

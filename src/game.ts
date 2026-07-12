@@ -3,7 +3,7 @@ import { FLOORS } from './world/specs';
 import { PALETTES } from './world/palette';
 import { buildFloor, makeCollider, type ActiveTarget, type BuiltFloor } from './world/builder';
 import { fillTokens } from './world/discrepancies';
-import { CS, cellCenter, facingToYaw, isWalkable } from './world/grid';
+import { CS, WALL_H, cellCenter, charAt, facingToYaw, isWalkable } from './world/grid';
 import { floorRng } from './core/rng';
 import type { LedgerEntry, SaveData } from './core/types';
 import { writeSave } from './core/save';
@@ -18,7 +18,7 @@ import { shareCard } from './ui/share';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
-const INTERACT_DIST = 3.4;
+const INTERACT_DIST = 5.0;
 
 interface PendingAlteration {
   anchor: string;
@@ -40,6 +40,7 @@ export class Game {
   private ambient = new THREE.AmbientLight(0xffffff, 0.5);
   private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.66, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
+  private flashBase = 28;
 
   private save: SaveData;
   private built: BuiltFloor | null = null;
@@ -157,7 +158,7 @@ export class Game {
     this.ambient.color.set(palette.ambient);
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
-    this.flashlight.intensity = 24;
+    this.flashlight.intensity = this.flashBase;
     this.collide = makeCollider(built);
 
     // walkable centers for occupancy sound placement
@@ -338,6 +339,29 @@ export class Game {
     return null;
   }
 
+  /** approximate distance to whatever the beam center lands on: floor,
+   *  ceiling, or the first wall cell along the view ray. cheap grid march,
+   *  no raycast against geometry. */
+  private aimDistance(origin: THREE.Vector3, dir: THREE.Vector3): number {
+    const MAX = 8;
+    let d = MAX;
+    if (dir.y < -1e-4) d = Math.min(d, -origin.y / dir.y);
+    else if (dir.y > 1e-4) d = Math.min(d, (WALL_H - origin.y) / dir.y);
+    const rows = this.built?.grid.rows;
+    if (rows) {
+      const step = 0.25;
+      for (let t = step; t < d; t += step) {
+        const cx = Math.floor((origin.x + dir.x * t) / CS);
+        const cz = Math.floor((origin.z + dir.z * t) / CS);
+        if (!isWalkable(charAt(rows, cx, cz))) {
+          d = t;
+          break;
+        }
+      }
+    }
+    return d;
+  }
+
   // -------------------------------------------------------------- elevator
 
   private playerInsideCar(): boolean {
@@ -490,6 +514,12 @@ export class Game {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     const targetPos = camPos.clone().add(fwd.multiplyScalar(6));
     this.flashTarget.position.lerp(targetPos, Math.min(1, dt * 9));
+
+    // auto-dim toward near surfaces so paper at arm's length stays paper,
+    // never a white bloom. iris-like: eases in and out.
+    const aim = this.aimDistance(camPos, fwd);
+    const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.14, 1);
+    this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
 
     // props
     for (const u of built.updatables) u(dt, this.time);

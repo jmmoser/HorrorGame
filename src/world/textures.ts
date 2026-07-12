@@ -170,7 +170,7 @@ export function windowTexture(
 export function calendarTexture(current: boolean, seed: number): THREE.CanvasTexture {
   const rng = mulberry32(seed ^ 0xca1);
   const { c, g } = makeCanvas(192, 256);
-  g.fillStyle = current ? '#ddd6c2' : '#b8ad8e';
+  g.fillStyle = current ? '#cfc6ab' : '#b8ad8e';
   g.fillRect(0, 0, 192, 256);
   const now = new Date();
   const months = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
@@ -263,6 +263,49 @@ export function doorTexture(p: Palette, seed: number): THREE.CanvasTexture {
   g.strokeRect(14, 132, 100, 106);
   stains(g, 128, 256, rng, 4, 0.18);
   grain(g, 128, 256, rng, 0.05, 260);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** rotary telephone dial: metal face, ten finger holes, worn center card */
+export function phoneDialTexture(seed: number): THREE.CanvasTexture {
+  const rng = mulberry32(seed ^ 0xd1a1);
+  const { c, g } = makeCanvas(128, 128);
+  g.fillStyle = '#9a9484';
+  g.beginPath();
+  g.arc(64, 64, 62, 0, Math.PI * 2);
+  g.fill();
+  // finger holes with digits beside them
+  g.font = 'bold 9px "Courier New", monospace';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (let i = 0; i < 10; i++) {
+    // classic dial: holes sweep from ~60° down around to ~300°
+    const a = ((i / 10) * 0.83 + 0.31) * Math.PI * 2;
+    const hx = 64 + Math.cos(a) * 44;
+    const hy = 64 + Math.sin(a) * 44;
+    g.fillStyle = '#14120e';
+    g.beginPath();
+    g.arc(hx, hy, 10, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#26231c';
+    const digit = i === 9 ? '0' : String(i + 1);
+    g.fillText(digit, 64 + Math.cos(a) * 24, 64 + Math.sin(a) * 24);
+  }
+  // center card, yellowed, number long illegible
+  g.fillStyle = '#c9c0a6';
+  g.beginPath();
+  g.arc(64, 64, 13, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = '#4a453a';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.arc(64, 64, 13, 0, Math.PI * 2);
+  g.stroke();
+  g.fillStyle = 'rgba(40,36,28,0.7)';
+  g.fillRect(56, 62, 16, 2);
+  grain(g, 128, 128, rng, 0.06, 160);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
