@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#050505" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="description"
+      content="A building inspector documents a condemned high-rise, floor by floor, descending. The elevator only goes down."
+    />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>The Descent Ledger</title>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <!-- Headphones gate. Also unlocks AudioContext / gyro permission. -->
+    <div id="gate" class="screen">
+      <div class="gate-inner">
+        <div class="gate-icon" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="72" height="72" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 40v-8a20 20 0 0 1 40 0v8" />
+            <rect x="8" y="38" width="10" height="16" rx="3" />
+            <rect x="46" y="38" width="10" height="16" rx="3" />
+          </svg>
+        </div>
+        <p class="gate-text">Headphones are strongly recommended.</p>
+        <p class="gate-sub">This inspection is conducted in near silence.</p>
+        <button id="gate-continue" class="ghost-btn">continue</button>
+      </div>
+    </div>
+
+    <!-- Title -->
+    <div id="title" class="screen hidden">
+      <div class="title-inner">
+        <p class="title-over">MUNICIPAL SURVEY — STRUCTURE 7</p>
+        <h1 class="title-name">THE&nbsp;DESCENT&nbsp;LEDGER</h1>
+        <p class="title-brief">
+          Condemned. Vacant thirty years.<br />
+          Document all discrepancies, floor by floor.<br />
+          The elevator only goes down.
+        </p>
+        <button id="btn-begin" class="ghost-btn">begin inspection</button>
+        <button id="btn-resume" class="ghost-btn hidden">resume — floor <span id="resume-floor"></span></button>
+        <p id="title-visitor" class="title-visitor hidden"></p>
+      </div>
+    </div>
+
+    <!-- In-game HUD: depth counter + reticle + ledger tab. Nothing else. -->
+    <div id="hud" class="hidden">
+      <div id="depth-counter">FLOOR<br /><span id="depth-num">—</span></div>
+      <div id="reticle"></div>
+      <button id="ledger-tab" aria-label="Open ledger">LEDGER</button>
+      <div id="log-toast" class="hidden"></div>
+    </div>
+
+    <!-- The ledger -->
+    <div id="ledger" class="hidden">
+      <div id="ledger-page">
+        <div class="ledger-head">
+          <span>STRUCTURE 7 — INSPECTION LEDGER</span>
+          <span id="ledger-quota"></span>
+        </div>
+        <canvas id="blueprint" width="640" height="440"></canvas>
+        <div id="ledger-entries"></div>
+        <div class="ledger-foot">
+          <button id="btn-share" class="paper-btn">tear out page</button>
+          <button id="btn-close-ledger" class="paper-btn">close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile controls -->
+    <div id="touch-ui" class="hidden">
+      <div id="stick-zone"><div id="stick-base"><div id="stick-nub"></div></div></div>
+      <div id="look-zone"></div>
+    </div>
+
+    <div id="fader"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
