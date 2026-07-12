@@ -154,14 +154,20 @@ export class AudioEngine {
     src.stop(t + opts.dur + 0.1);
   }
 
+  private stepParity = false;
+
   footstep(intensity: number, surface: FloorSpec['palette']) {
     const soft = surface === 'sodium-orange' || surface === 'tungsten-dust'; // carpet-ish floors
+    // alternate feet land slightly differently; every step rolls its own
+    // timbre and level so a walk never turns into a metronome
+    this.stepParity = !this.stepParity;
+    const foot = this.stepParity ? 1 : 0.85;
     this.burst({
-      dur: 0.09 + Math.random() * 0.04,
+      dur: 0.07 + Math.random() * 0.07,
       filter: 'bandpass',
-      freq: soft ? 240 + Math.random() * 120 : 700 + Math.random() * 500,
-      q: soft ? 0.7 : 1.4,
-      gain: (soft ? 0.05 : 0.075) * (0.5 + intensity * 0.5),
+      freq: (soft ? 200 + Math.random() * 180 : 560 + Math.random() * 700) * foot,
+      q: (soft ? 0.7 : 1.4) * (0.85 + Math.random() * 0.4),
+      gain: (soft ? 0.03 : 0.045) * (0.5 + intensity * 0.5) * (0.72 + Math.random() * 0.38),
     });
   }
 
