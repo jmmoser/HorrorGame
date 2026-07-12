@@ -40,7 +40,7 @@ export class Game {
   private ambient = new THREE.AmbientLight(0xffffff, 0.5);
   private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.74, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
-  private flashBase = 34;
+  private flashBase = 40;
 
   private save: SaveData;
   private built: BuiltFloor | null = null;
@@ -68,7 +68,7 @@ export class Game {
       powerPreference: 'high-performance',
     });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.3;
+    this.renderer.toneMappingExposure = 1.5;
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);

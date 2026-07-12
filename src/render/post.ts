@@ -11,7 +11,7 @@ const FilmShader = {
     tDiffuse: { value: null as THREE.Texture | null },
     time: { value: 0 },
     grain: { value: 0.055 },
-    vignette: { value: 0.3 },
+    vignette: { value: 0.22 },
     aberration: { value: 0.0035 },
     desat: { value: 0.24 },
   },
@@ -57,7 +57,7 @@ const FilmShader = {
 
       // vignette
       float vig = 1.0 - smoothstep(0.15, 0.85, r2 * (1.6 + vignette));
-      col *= mix(1.0, vig, vignette + 0.25);
+      col *= mix(1.0, vig, vignette + 0.15);
 
       gl_FragColor = vec4(col, 1.0);
     }

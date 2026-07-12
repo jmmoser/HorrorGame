@@ -89,7 +89,8 @@ export class ElevatorRig {
       new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffe2b8, emissiveIntensity: 1.2 }),
     );
     lightPanel.rotation.x = Math.PI / 2;
-    lightPanel.position.set(el.cx, 2.23, el.cz);
+    // keep clear of the roof plate's underside (y=2.23) or the two z-fight
+    lightPanel.position.set(el.cx, 2.2, el.cz);
     this.group.add(lightPanel);
 
     // sliding doors across the opening
@@ -208,6 +209,9 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     selected.filter((s) => s.def.anchor).map((s) => [s.def.anchor, s]),
   );
   const ledgerDiscrepancy = selected.find((s) => s.def.type === 'ledger-altered') ?? null;
+  // light-burning: the impossible light must be the ONLY one burning up here,
+  // or the entry ("the building has had no power since 1996") reads as noise
+  const burningLight = selected.find((s) => s.def.type === 'light-burning') ?? null;
 
   // long-hallway: the map itself is longer than the blueprint says
   const stretchActive = selected.some((s) => s.def.type === 'long-hallway');
@@ -287,8 +291,11 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     if (anchor.absentWhenNormal && !wrong) continue;
 
     const propSeed = hashCombine(seed, spec.floor * 100000 + letter.charCodeAt(0));
-    const effectiveAnchor =
+    let effectiveAnchor =
       anchor.wrongLabel !== undefined && wrong ? { ...anchor, label: anchor.wrongLabel } : anchor;
+    if (anchor.role === 'light' && burningLight && burningLight.def.anchor !== letter) {
+      effectiveAnchor = { ...effectiveAnchor, lit: false, flicker: false };
+    }
     const prop = buildProp({
       palette,
       rng: mulberry32(propSeed),

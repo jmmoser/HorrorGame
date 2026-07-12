@@ -200,6 +200,25 @@ export function validateSpec(spec: FloorSpec): string[] {
   if (anchored < spec.spawnCount) {
     errors.push('pool smaller than spawnCount');
   }
+  // elevator must open on exactly one side — a second opening makes the
+  // door/button placement in buildGrid ambiguous (and once put a call button
+  // inside a wall)
+  {
+    const dirs = new Set<Facing>();
+    for (let z = 0; z < rows.length; z++) {
+      for (let x = 0; x < w; x++) {
+        if (rows[z][x] !== 'E') continue;
+        for (const dir of Object.keys(DIRS) as Facing[]) {
+          const [dx, dz] = DIRS[dir];
+          const ch = charAt(rows, x + dx, z + dz);
+          if (isWalkable(ch) && ch !== 'E') dirs.add(dir);
+        }
+      }
+    }
+    if (dirs.size > 1) {
+      errors.push(`elevator opens on multiple sides: ${[...dirs].join(', ')}`);
+    }
+  }
   // everything reachable from the elevator
   try {
     const grid = buildGrid(rows);
