@@ -8,6 +8,22 @@ import { registerSW } from 'virtual:pwa-register';
 registerSW({ immediate: true });
 devValidate();
 
+// hard-disable zoom: iOS Safari ignores user-scalable=no, so block its
+// pinch gesture events and the double-tap-to-zoom fallback directly
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+}
+let lastTouchEnd = 0;
+document.addEventListener(
+  'touchend',
+  (e) => {
+    const now = performance.now();
+    if (now - lastTouchEnd < 350) e.preventDefault();
+    lastTouchEnd = now;
+  },
+  { passive: false },
+);
+
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const gate = document.getElementById('gate')!;
 const title = document.getElementById('title')!;
