@@ -1,0 +1,28 @@
+{
+  "name": "the-descent-ledger",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A web-based, mobile-first psychological horror game. The elevator only goes down.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmmoser/HorrorGame.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "playwright": "^1.61.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vite-plugin-pwa": "^1.3.0"
+  }
+}
