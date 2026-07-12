@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  // Served from https://jmmoser.github.io/HorrorGame/ on GitHub Pages.
+  base: '/HorrorGame/',
   build: {
     target: 'es2022',
     sourcemap: false,
