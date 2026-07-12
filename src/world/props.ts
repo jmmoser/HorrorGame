@@ -7,6 +7,7 @@ import {
   doorTexture,
   footprintTexture,
   paperTexture,
+  phoneDialTexture,
   puffTexture,
   roomPlateTexture,
   windowTexture,
@@ -123,32 +124,117 @@ function buildChair(ctx: PropContext): PropInstance {
 }
 
 function buildCabinet(): PropInstance {
+  // steel filing cabinet: recessed carcass, proud drawer fronts, label plates
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.35, 0.5), mat(0x5d5a50, { metalness: 0.25, roughness: 0.6 }));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.35, 0.48), mat(0x504d45, { metalness: 0.25, roughness: 0.6 }));
   body.position.y = 0.675;
   g.add(body);
-  const handle = new THREE.BoxGeometry(0.16, 0.02, 0.02);
+  const frontM = mat(0x605d54, { metalness: 0.3, roughness: 0.55 });
+  const handleM = mat(0x26241f, { metalness: 0.55, roughness: 0.35 });
+  const labelM = mat(0x8f897a, { roughness: 0.8 });
+  const frontGeo = new THREE.BoxGeometry(0.47, 0.27, 0.035);
+  const handleGeo = new THREE.BoxGeometry(0.15, 0.028, 0.03);
+  const labelGeo = new THREE.BoxGeometry(0.09, 0.05, 0.006);
   for (let i = 0; i < 4; i++) {
-    const h = new THREE.Mesh(handle, mat(0x2c2a24, { metalness: 0.5, roughness: 0.4 }));
-    h.position.set(0, 0.3 + i * 0.31, 0.26);
-    g.add(h);
+    const cy = 0.3 + i * 0.31;
+    const front = new THREE.Mesh(frontGeo, frontM);
+    front.position.set(0, cy, 0.24);
+    const handle = new THREE.Mesh(handleGeo, handleM);
+    handle.position.set(0, cy - 0.08, 0.27);
+    const label = new THREE.Mesh(labelGeo, labelM);
+    label.position.set(0, cy + 0.05, 0.259);
+    g.add(front, handle, label);
   }
   return { group: g };
 }
 
 function buildShelf(ctx: PropContext): PropInstance {
+  // open archive shelving: real recessed bays, not boxes glued to a slab
   const g = new THREE.Group();
+  const W = 1.0;
+  const H = 2.0;
+  const D = 0.38;
   const frame = mat(0x4a463c);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.0, 0.36), frame);
-  body.position.y = 1.0;
-  g.add(body);
-  const boxGeo = new THREE.BoxGeometry(0.2, 0.26, 0.3);
-  for (let s = 0; s < 4; s++) {
-    for (let i = 0; i < 4; i++) {
-      if (ctx.rng() > 0.62) continue;
-      const b = new THREE.Mesh(boxGeo, mat(0x6a5c44));
-      b.position.set(-0.36 + i * 0.24, 0.36 + s * 0.44, 0.05);
-      g.add(b);
+  const backM = mat(0x2c2923, { roughness: 0.97 });
+  const sideGeo = new THREE.BoxGeometry(0.04, H, D);
+  const left = new THREE.Mesh(sideGeo, frame);
+  left.position.set(-(W / 2 - 0.02), H / 2, 0);
+  const right = new THREE.Mesh(sideGeo, frame);
+  right.position.set(W / 2 - 0.02, H / 2, 0);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(W, 0.04, D), frame);
+  top.position.y = H - 0.02;
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(W, 0.08, D), frame);
+  plinth.position.y = 0.04;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(W - 0.06, H - 0.1, 0.02), backM);
+  back.position.set(0, H / 2, -D / 2 + 0.015);
+  g.add(left, right, top, plinth, back);
+
+  const boardGeo = new THREE.BoxGeometry(W - 0.07, 0.035, D - 0.04);
+  const bayFloors = [0.08];
+  for (const y of [0.55, 1.02, 1.49]) {
+    const board = new THREE.Mesh(boardGeo, frame);
+    board.position.set(0, y, 0);
+    g.add(board);
+    bayFloors.push(y + 0.018);
+  }
+
+  // bay contents: cardboard boxes, box files, loose paper stacks — with gaps
+  const cardboards = [0x6a5c44, 0x74644a, 0x5d5140, 0x6e6047];
+  const files = [0x41453a, 0x4a332c, 0x3c3f45];
+  for (const floorY of bayFloors) {
+    let x = -W / 2 + 0.08;
+    while (x < W / 2 - 0.14) {
+      const roll = ctx.rng();
+      if (roll < 0.22) {
+        // leave a gap — thirty years of things taken and never returned
+        x += 0.1 + ctx.rng() * 0.12;
+        continue;
+      }
+      if (roll < 0.42) {
+        // run of vertical box files
+        const n = 2 + ((ctx.rng() * 3) | 0);
+        const color = files[(ctx.rng() * files.length) | 0];
+        for (let i = 0; i < n && x < W / 2 - 0.12; i++) {
+          const h = 0.28 + ctx.rng() * 0.05;
+          const b = new THREE.Mesh(new THREE.BoxGeometry(0.075, h, 0.26), mat(color));
+          b.position.set(x + 0.04, floorY + h / 2, -0.02 + ctx.rng() * 0.04);
+          b.rotation.y = (ctx.rng() - 0.5) * 0.06;
+          g.add(b);
+          x += 0.082;
+        }
+        x += 0.02;
+      } else if (roll < 0.6) {
+        // stack of loose paper
+        const h = 0.03 + ctx.rng() * 0.06;
+        const s = new THREE.Mesh(
+          new THREE.BoxGeometry(0.23, h, 0.29),
+          mat(0x8d8674, { roughness: 0.96 }),
+        );
+        s.position.set(x + 0.12, floorY + h / 2, -0.01 + ctx.rng() * 0.03);
+        s.rotation.y = (ctx.rng() - 0.5) * 0.14;
+        g.add(s);
+        x += 0.27;
+      } else {
+        // cardboard archive box, slightly skewed, pushed in to its own depth
+        const bw = 0.2 + ctx.rng() * 0.09;
+        const bh = 0.2 + ctx.rng() * 0.13;
+        const bd = 0.24 + ctx.rng() * 0.06;
+        const color = cardboards[(ctx.rng() * cardboards.length) | 0];
+        const b = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), mat(color));
+        b.position.set(x + bw / 2, floorY + bh / 2, -0.04 + ctx.rng() * 0.07);
+        b.rotation.y = (ctx.rng() - 0.5) * 0.1;
+        g.add(b);
+        // lid lip so it reads as a box, not a block
+        const lid = new THREE.Mesh(
+          new THREE.BoxGeometry(bw + 0.015, 0.035, bd + 0.015),
+          mat(color, { roughness: 0.95 }),
+        );
+        lid.position.copy(b.position);
+        lid.position.y = floorY + bh - 0.0175;
+        lid.rotation.y = b.rotation.y;
+        g.add(lid);
+        x += bw + 0.03 + ctx.rng() * 0.04;
+      }
     }
   }
   return { group: g };
@@ -443,22 +529,104 @@ function buildCoffee(ctx: PropContext): PropInstance {
   return { group: g, hit, update };
 }
 
+/** coiled handset cord sagging between two local-space points */
+function coiledCord(from: THREE.Vector3, to: THREE.Vector3, material: THREE.Material): THREE.Mesh {
+  const mid = from.clone().lerp(to, 0.5);
+  mid.y = Math.max(0.012, Math.min(from.y, to.y) - 0.035);
+  const path = new THREE.CatmullRomCurve3([from, mid, to]);
+  const N = 160;
+  const coils = 20;
+  const r = 0.008;
+  const pts: THREE.Vector3[] = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const p = path.getPoint(t);
+    const tan = path.getTangent(t);
+    const n1 = up.clone().cross(tan).normalize();
+    if (n1.lengthSq() < 0.01) n1.set(1, 0, 0);
+    const n2 = tan.clone().cross(n1).normalize();
+    const a = t * Math.PI * 2 * coils;
+    p.addScaledVector(n1, Math.cos(a) * r).addScaledVector(n2, Math.sin(a) * r);
+    p.y = Math.max(0.006, p.y);
+    pts.push(p);
+  }
+  const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), N * 2, 0.0042, 5);
+  return new THREE.Mesh(geo, material);
+}
+
 function buildPhone(ctx: PropContext): PropInstance {
+  // black rotary desk phone. the kind that should not still get a dial tone.
   const g = new THREE.Group();
   sideTable(g);
   const y = 0.77;
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.09, 0.17), mat(0x27251f));
-  base.position.set(0, y + 0.045, 0);
-  g.add(base);
-  const handset = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.045, 0.055), mat(0x2d2b24));
+  const bodyM = mat(0x2b2823, { roughness: 0.35, metalness: 0.15 });
+  const phone = new THREE.Group();
+  phone.position.set(0, y, 0);
+  phone.rotation.y = -0.3;
+  g.add(phone);
+
+  // wedge body: low at the dial, rising to the cradle at the back
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.17), bodyM);
+  base.position.set(0, 0.025, 0);
+  const riser = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.075, 0.08), bodyM);
+  riser.position.set(0, 0.085, -0.04);
+  const slope = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.028, 0.13), bodyM);
+  slope.rotation.x = -0.48;
+  slope.position.set(0, 0.083, 0.017);
+  phone.add(base, riser, slope);
+
+  // rotary dial set on the sloped face
+  const dial = new THREE.Mesh(
+    new THREE.CircleGeometry(0.052, 24),
+    new THREE.MeshStandardMaterial({ map: phoneDialTexture(ctx.seed), roughness: 0.5, metalness: 0.2 }),
+  );
+  dial.rotation.x = -(Math.PI / 2 - 0.48);
+  dial.position.set(0, 0.101, 0.021);
+  const fingerStop = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.03), mat(0x8a8578, { metalness: 0.6, roughness: 0.35 }));
+  fingerStop.rotation.x = -0.48;
+  fingerStop.position.set(0.038, 0.108, 0.052);
+  phone.add(dial, fingerStop);
+
+  // cradle posts on the back deck
+  const postGeo = new THREE.BoxGeometry(0.026, 0.03, 0.05);
+  const postL = new THREE.Mesh(postGeo, bodyM);
+  postL.position.set(-0.062, 0.137, -0.04);
+  const postR = new THREE.Mesh(postGeo, bodyM);
+  postR.position.set(0.062, 0.137, -0.04);
+  phone.add(postL, postR);
+
+  // handset: grip bar with ear and mouth cups
+  const handset = new THREE.Group();
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.026, 0.032), bodyM);
+  const cupGeo = new THREE.CylinderGeometry(0.032, 0.024, 0.034, 12);
+  const cupL = new THREE.Mesh(cupGeo, bodyM);
+  cupL.position.set(-0.075, -0.006, 0);
+  const cupR = new THREE.Mesh(cupGeo, bodyM);
+  cupR.position.set(0.075, -0.006, 0);
+  handset.add(grip, cupL, cupR);
+
+  const cordM = mat(0x191713, { roughness: 0.6 });
   if (ctx.wrong) {
-    // off the hook, laid carefully beside the base. facing up.
-    handset.position.set(0.22, y + 0.025, 0.04);
-    handset.rotation.y = 0.5;
+    // off the hook, laid carefully beside the base. cups facing up.
+    handset.position.set(0.21, 0.032, 0.05);
+    handset.rotation.set(Math.PI, 0.55, 0);
+    phone.add(coiledCord(
+      new THREE.Vector3(-0.09, 0.05, -0.04),
+      new THREE.Vector3(0.13, 0.03, 0.03),
+      cordM,
+    ));
   } else {
-    handset.position.set(0, y + 0.11, 0);
+    // resting in the cradle where it has waited for thirty years
+    handset.position.set(0, 0.17, -0.04);
+    phone.add(coiledCord(
+      new THREE.Vector3(-0.09, 0.05, -0.04),
+      new THREE.Vector3(-0.075, 0.16, -0.04),
+      cordM,
+    ));
   }
-  g.add(handset);
+  phone.add(handset);
+
   const hit = hitbox(0.55, 0.5, 0.5, y + 0.1);
   g.add(hit);
   return { group: g, hit, audioKind: ctx.wrong ? 'dialtone' : undefined };
