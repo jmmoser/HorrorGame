@@ -438,7 +438,7 @@ function buildLightFixture(ctx: PropContext): PropInstance {
     }),
   );
   panel.rotation.x = Math.PI / 2;
-  panel.position.y = -0.05;
+  panel.position.y = -0.055;
   g.add(housing, panel);
   let light: THREE.PointLight | undefined;
   if (lit) {
@@ -473,7 +473,12 @@ function buildLightFixture(ctx: PropContext): PropInstance {
         update = undefined;
       }
       if (kind === 'light-on') {
-        if (light) light.intensity = ctx.palette.lampIntensity;
+        if (!light) {
+          light = new THREE.PointLight(ctx.palette.lamp, 0, 11, 1.8);
+          light.position.y = -0.4;
+          g.add(light);
+        }
+        light.intensity = ctx.palette.lampIntensity;
         (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
       }
     },

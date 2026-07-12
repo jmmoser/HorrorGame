@@ -179,9 +179,9 @@ export const FLOORS: FloorSpec[] = [
         tier: 1,
         anchor: 'o',
         entry:
-          'The ceiling fixture in unit 2B is burning. The building has had no power since 1996. I checked the meter riser myself on the way in. It is cut at the street.',
+          'The ceiling fixture in unit 2B is burning. Every other fixture on this floor is dead. The building has had no power since 1996. I checked the meter riser myself on the way in. It is cut at the street.',
         toast: 'logged: a light with no power',
-        alteration: { anchor: 'H', kind: 'light-off' },
+        alteration: { anchor: 'H', kind: 'light-on' },
       },
       {
         id: 'f2-calendar',
@@ -228,8 +228,8 @@ export const FLOORS: FloorSpec[] = [
 #......t........u.....#
 #.....................#
 ##.################.###
-#EE...................#
-######.########.#######
+#.....................#
+#EE###.########.#######
 ###y.....###Y.z...#####
 ###..v...###..V...#####
 ###..x...###..X...#####
