@@ -11,7 +11,7 @@ const FilmShader = {
     tDiffuse: { value: null as THREE.Texture | null },
     time: { value: 0 },
     grain: { value: 0.055 },
-    vignette: { value: 0.42 },
+    vignette: { value: 0.3 },
     aberration: { value: 0.0035 },
     desat: { value: 0.24 },
   },

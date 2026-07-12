@@ -38,9 +38,9 @@ export class Game {
   private hud = new Hud();
   private ledgerUI = new LedgerUI();
   private ambient = new THREE.AmbientLight(0xffffff, 0.5);
-  private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.66, 0.92, 1.15);
+  private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.74, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
-  private flashBase = 28;
+  private flashBase = 34;
 
   private save: SaveData;
   private built: BuiltFloor | null = null;
@@ -68,7 +68,7 @@ export class Game {
       powerPreference: 'high-performance',
     });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.3;
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);
@@ -518,7 +518,7 @@ export class Game {
     // auto-dim toward near surfaces so paper at arm's length stays paper,
     // never a white bloom. iris-like: eases in and out.
     const aim = this.aimDistance(camPos, fwd);
-    const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.14, 1);
+    const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1);
     this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
 
     // props
