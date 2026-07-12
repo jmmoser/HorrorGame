@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Controls } from './controls';
 
-const WALK_SPEED = 1.75; // m/s. an inspector's pace, not a soldier's.
+const WALK_SPEED = 2.5; // m/s. purposeful, but still an inspector, not a soldier.
 const EYE_HEIGHT = 1.62;
 const RADIUS = 0.32;
 
@@ -18,6 +18,7 @@ export class Player {
   private vel = new THREE.Vector2(0, 0);
   private bobPhase = 0;
   private stepAccum = 0;
+  private nextStepAt = 0.9;
   private camera: THREE.PerspectiveCamera;
   private controls: Controls;
 
@@ -72,8 +73,10 @@ export class Player {
     // head bob — subtle, slower than the usual game trot
     this.bobPhase += dt * (4.6 * speed);
     this.stepAccum += Math.hypot(this.vel.x * dt, this.vel.y * dt);
-    if (this.stepAccum > 0.82) {
+    if (this.stepAccum > this.nextStepAt) {
       this.stepAccum = 0;
+      // strides are never metronome-even
+      this.nextStepAt = 0.84 + Math.random() * 0.18;
       if (speed > 0.12) this.onStep?.(speed);
     }
     const bobY = Math.sin(this.bobPhase * Math.PI) * 0.022 * speed;
