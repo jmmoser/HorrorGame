@@ -19,26 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The repo's Pages source must be "GitHub Actions". While it is
-      # "Deploy from a branch", every push also triggers a legacy build that
-      # publishes the raw repository source and races (and has been beating)
-      # the artifact deployed below — leaving /src/main.ts live instead of
-      # the built app. Flip the source via the API; harmless if already set.
-      - name: Set Pages source to GitHub Actions
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          code=$(curl -s -o /tmp/pages-resp.json -w '%{http_code}' -X PUT \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/pages" \
-            -d '{"build_type":"workflow"}')
-          if [ "$code" = "204" ]; then
-            echo "Pages source set to GitHub Actions."
-          else
-            cat /tmp/pages-resp.json
-            echo "::warning::Could not switch the Pages source (HTTP $code). Set it manually: Settings → Pages → Source → GitHub Actions."
-          fi
       - uses: actions/configure-pages@v5
       - uses: actions/setup-node@v4
         with:
@@ -57,28 +37,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # If this push also queued a legacy branch build (possible on the one
-      # push that transitions the source setting), let it finish first so our
-      # artifact deployment is the last write and wins.
-      - name: Wait for any in-flight legacy Pages build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for i in $(seq 1 24); do
-            status=$(curl -s \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds/latest" \
-              | jq -r '.status // "none"')
-            echo "legacy pages build status: $status"
-            if [ "$status" != "building" ] && [ "$status" != "queued" ]; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::warning::Legacy Pages build still running after 2 minutes; deploying anyway."
       - id: deployment
         uses: actions/deploy-pages@v4
+      # Guard against the raw repository source going live again (this
+      # happens when the repo's Pages source is "Deploy from a branch":
+      # the legacy branch build races this deployment and overwrites it).
       - name: Verify the built app is live
         run: |
           url="${{ steps.deployment.outputs.page_url }}"
