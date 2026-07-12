@@ -116,6 +116,7 @@ export class Game {
   // ------------------------------------------------------------- lifecycle
 
   start() {
+    this.controls.enabled = true;
     this.hud.show();
     if (this.controls.isTouch) document.getElementById('touch-ui')!.classList.remove('hidden');
     this.haptics.start();
@@ -397,6 +398,7 @@ export class Game {
       await shareCard(this.depthShown, entry);
     });
     this.hud.hide();
+    this.controls.enabled = false;
     document.getElementById('touch-ui')!.classList.add('hidden');
     this.persist();
   }
