@@ -18,7 +18,7 @@ import { shareCard } from './ui/share';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
-const INTERACT_DIST = 3.4;
+const INTERACT_DIST = 5.0;
 
 interface PendingAlteration {
   anchor: string;
