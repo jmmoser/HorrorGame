@@ -48,6 +48,7 @@
         </p>
         <button id="btn-begin" class="ghost-btn">begin inspection</button>
         <button id="btn-resume" class="ghost-btn hidden">resume — floor <span id="resume-floor"></span></button>
+        <p id="title-case" class="title-visitor hidden"></p>
         <p id="title-visitor" class="title-visitor hidden"></p>
       </div>
     </div>
@@ -56,6 +57,16 @@
     <div id="hud" class="hidden">
       <div id="depth-counter">FLOOR<br /><span id="depth-num">—</span></div>
       <div id="reticle"></div>
+      <svg id="doc-ring" class="hidden" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="12" fill="none" stroke="rgba(216,210,196,0.18)" stroke-width="1.5" />
+        <circle id="doc-ring-fill" cx="16" cy="16" r="12" fill="none" stroke="rgba(216,210,196,0.85)"
+          stroke-width="1.5" stroke-linecap="round" stroke-dasharray="75.4" stroke-dashoffset="75.4"
+          transform="rotate(-90 16 16)" />
+      </svg>
+      <div id="floor-card" class="hidden">
+        <div id="floor-card-name"></div>
+        <div id="floor-card-sched"></div>
+      </div>
       <button id="ledger-tab" aria-label="Open ledger">LEDGER</button>
       <div id="log-toast" class="hidden"></div>
     </div>
@@ -64,9 +75,10 @@
     <div id="ledger" class="hidden">
       <div id="ledger-page">
         <div class="ledger-head">
-          <span>STRUCTURE 7 — INSPECTION LEDGER</span>
+          <span>STRUCTURE 7 — INSPECTION LEDGER · <span id="ledger-case"></span></span>
           <span id="ledger-quota"></span>
         </div>
+        <div id="ledger-schedule"></div>
         <canvas id="blueprint" width="640" height="440"></canvas>
         <div id="ledger-entries"></div>
         <div class="ledger-foot">

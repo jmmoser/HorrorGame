@@ -15,6 +15,11 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.5,
     occupancy: [],
+    schedule: [
+      'ROOMS 101–105 · TWO CORRIDOR DOORS',
+      'POWER CUT AT STREET — 1996',
+      'NIGHT INSPECTION · ALL WINDOWS DARK',
+    ],
     map: `
 #######################
 #..q..#...w..#..x...H.#
@@ -23,7 +28,7 @@ export const FLOORS: FloorSpec[] = [
 ###.#####.#######.#####
 #.r..Ou.s..P..d.t...v.#
 ####.#####EE######.####
-#.......######V.......#
+#.......######V.b.....#
 #I......######......T.#
 #....K..######........#
 #J......######........#
@@ -60,6 +65,15 @@ export const FLOORS: FloorSpec[] = [
       V: { role: 'cabinet', facing: 's' },
       T: { role: 'bench', facing: 'w' },
       W: { role: 'plant', facing: 'n' },
+      b: {
+        role: 'notice',
+        facing: 's',
+        notice: {
+          lines: ['NOTICE TO STAFF', 'LETTINGS SUSPENDED', 'BY ORDER', '12 MARCH 1996', 'REMOVE EFFECTS', 'BY FRIDAY'],
+          entry:
+            'A notice pinned in the south room: "LETTINGS SUSPENDED BY ORDER — 12 MARCH 1996. REMOVE EFFECTS BY FRIDAY." The pin has rusted through. Nobody removed anything.',
+        },
+      },
     },
     pool: [
       {
@@ -118,11 +132,16 @@ export const FLOORS: FloorSpec[] = [
     hum: 0.35,
     occupancy: ['phone-ring'],
     stretch: { row: 11, count: 3 },
+    schedule: [
+      'UNITS 2E–2K · ONE CORRIDOR — 35 METERS',
+      'NO WORKING FIXTURES LISTED',
+      'ALL LINES DISCONNECTED — 1996',
+    ],
     map: `
 ###############
 ######EE#######
 #####W.Y..#####
-#p...q#.#######
+#p.g.q#.#######
 #..o..#A#######
 #r.....H#######
 #....s#B#######
@@ -162,6 +181,15 @@ export const FLOORS: FloorSpec[] = [
       G: { role: 'door', facing: 'w', label: '2K' },
       J: { role: 'light', facing: 's', lit: false },
       z: { role: 'stretchmark', facing: 'n', absentWhenNormal: true },
+      g: {
+        role: 'notice',
+        facing: 's',
+        notice: {
+          lines: ['TO WHOEVER', 'KNOCKS —', 'WE HEAR YOU.', 'WE ARE NOT', 'OPENING THE', 'DOOR AGAIN.', '— 2E'],
+          entry:
+            'A handwritten note taped up in the first unit: "TO WHOEVER KNOCKS — WE HEAR YOU. WE ARE NOT OPENING THE DOOR AGAIN. — 2E." The tape has not yellowed.',
+        },
+      },
     },
     pool: [
       {
@@ -219,6 +247,11 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.3,
     occupancy: ['chair-scrape', 'below'],
+    schedule: [
+      'OPEN PLAN · TWO SOUTH OFFICES',
+      'NO LIVE PLANTING · NO TENANTS 30 YRS',
+      'CLOCKS STOPPED AT 4:17 — SEE 1996 SURVEY',
+    ],
     map: `
 #######################
 #...a.....b.....c....p#
@@ -228,7 +261,7 @@ export const FLOORS: FloorSpec[] = [
 #......t........u.....#
 #.....................#
 ##.################.###
-#.....................#
+#....e................#
 #EE###.########.#######
 ###y.....###Y.z...#####
 ###..v...###..V...#####
@@ -260,6 +293,15 @@ export const FLOORS: FloorSpec[] = [
       V: { role: 'desk', facing: 'n' },
       X: { role: 'chair', facing: 's' },
       z: { role: 'twinroom', facing: 's', absentWhenNormal: true },
+      e: {
+        role: 'notice',
+        facing: 's',
+        notice: {
+          lines: ['MEMO — FACILITIES', 'RE: SOUTH OFFICES', '', 'USE ONE ROOM', 'OR THE OTHER.', 'NOT BOTH.'],
+          entry:
+            'A facilities memo in the south corridor: "RE: SOUTH OFFICES — USE ONE ROOM OR THE OTHER. NOT BOTH." It is not dated. It reads like it was written tired.',
+        },
+      },
     },
     pool: [
       {
@@ -326,6 +368,11 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.5,
     hum: 0.55,
     occupancy: ['knock', 'below'],
+    schedule: [
+      'ARCHIVE STACKS · ONE CROSS-CORRIDOR',
+      'RISERS DRAINED 1996 — NO WATER',
+      'NO SMOKING IN RECORDS — ENFORCED',
+    ],
     map: `
 #####################
 ########EE###########
@@ -335,7 +382,7 @@ export const FLOORS: FloorSpec[] = [
 #.......#.......#...#
 #a......#.v.....#.b.#
 #####.###.#####.##.##
-#...................#
+#.n.................#
 #.N....d....P.....O.#
 ###.#####.#####.#####
 #c....##y..x##.....f#
@@ -366,6 +413,15 @@ export const FLOORS: FloorSpec[] = [
       g: { role: 'cart', facing: 'e' },
       h: { role: 'chair', facing: 'n' },
       e: { role: 'shelf', facing: 'w' },
+      n: {
+        role: 'notice',
+        facing: 's',
+        notice: {
+          lines: ['RETRIEVAL SLIP', '', 'FILE: STRUCTURE 7', 'STATUS: WITHDRAWN', 'BY: THE OWNER', 'RETURN: —'],
+          entry:
+            'A retrieval slip pinned in the cross-corridor: the file for Structure 7 itself, withdrawn by "THE OWNER", return date blank. The handwriting is one I almost recognize.',
+        },
+      },
     },
     pool: [
       {
@@ -427,10 +483,15 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.2,
     occupancy: ['below', 'chair-scrape'],
+    schedule: [
+      'LOWER LOBBY · SCHEDULE ENDS HERE',
+      'FLOOR −05 IS THE LAST FLOOR',
+      'SIGN THE LEDGER BEFORE LEAVING',
+    ],
     map: `
 ###############
 ######EE#######
-#.....L......##
+#e....L......##
 #..a.....b...##
 #....t.......##
 ##.####.####.##
@@ -457,6 +518,15 @@ export const FLOORS: FloorSpec[] = [
       p: { role: 'footprints', facing: 'n', absentWhenNormal: true },
       d: { role: 'chair', facing: 'n' },
       D: { role: 'chair', facing: 'n' },
+      e: {
+        role: 'notice',
+        facing: 's',
+        notice: {
+          lines: ['RECEPTION', '', 'ALL VISITORS', 'MUST SIGN IN.', '', 'THE INSPECTOR', 'WILL SIGN OUT.'],
+          entry:
+            'A sign at reception: "ALL VISITORS MUST SIGN IN. THE INSPECTOR WILL SIGN OUT." The second line is newer than the first.',
+        },
+      },
     },
     pool: [
       {

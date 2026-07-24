@@ -3,7 +3,7 @@ import type { LedgerEntry } from '../core/types';
 // The share card: a torn-out ledger page. Depth + one logged discrepancy +
 // the URL. This is the growth mechanic — the page must look like evidence.
 
-function drawCard(floor: number, entry: LedgerEntry | null): HTMLCanvasElement {
+function drawCard(floor: number, entry: LedgerEntry | null, caseNum?: string): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = 1080;
   c.height = 1350;
@@ -37,7 +37,11 @@ function drawCard(floor: number, entry: LedgerEntry | null): HTMLCanvasElement {
   g.font = '26px "Courier New", monospace';
   g.textAlign = 'left';
   g.fillText('MUNICIPAL SURVEY — STRUCTURE 7', 70, 120);
-  g.fillText('INSPECTION LEDGER — PAGE TORN OUT', 70, 158);
+  g.fillText(
+    caseNum ? `INSPECTION LEDGER — ${caseNum}` : 'INSPECTION LEDGER — PAGE TORN OUT',
+    70,
+    158,
+  );
   g.strokeStyle = '#a99f85';
   g.lineWidth = 2;
   g.beginPath();
@@ -87,8 +91,12 @@ export function shareUrl(floor: number): string {
   return `${location.origin}${location.pathname}?f=${floor}`;
 }
 
-export async function shareCard(floor: number, entry: LedgerEntry | null): Promise<'shared' | 'downloaded'> {
-  const canvas = drawCard(floor, entry);
+export async function shareCard(
+  floor: number,
+  entry: LedgerEntry | null,
+  caseNum?: string,
+): Promise<'shared' | 'downloaded'> {
+  const canvas = drawCard(floor, entry, caseNum);
   const blob = await new Promise<Blob>((res, rej) =>
     canvas.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'),
   );

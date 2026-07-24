@@ -8,6 +8,13 @@ export class Hud {
   private tab = document.getElementById('ledger-tab')!;
   private toast = document.getElementById('log-toast')!;
   private toastTimer: number | null = null;
+  private docRing = document.getElementById('doc-ring')!;
+  private docRingFill = document.getElementById('doc-ring-fill')!;
+  private floorCard = document.getElementById('floor-card')!;
+  private floorCardName = document.getElementById('floor-card-name')!;
+  private floorCardSched = document.getElementById('floor-card-sched')!;
+  private floorCardTimer: number | null = null;
+  private static DOC_CIRC = 75.4;
 
   show() {
     this.root.classList.remove('hidden');
@@ -23,6 +30,40 @@ export class Hud {
 
   setOnTarget(on: boolean) {
     this.reticle.classList.toggle('on-target', on);
+  }
+
+  /** documenting ring around the reticle; progress 0..1, null hides it */
+  setDocProgress(p: number | null) {
+    if (p === null) {
+      this.docRing.classList.add('hidden');
+      return;
+    }
+    this.docRing.classList.remove('hidden');
+    this.docRingFill.setAttribute(
+      'stroke-dashoffset',
+      String(Hud.DOC_CIRC * (1 - Math.min(1, Math.max(0, p)))),
+    );
+  }
+
+  /** floor arrival card: name + the filed schedule, fading after a beat */
+  showFloorCard(floor: number, name: string, schedule: string[]) {
+    this.floorCardName.textContent = `FLOOR −${String(floor).padStart(2, '0')} · ${name}`;
+    this.floorCardSched.innerHTML = '';
+    for (const line of schedule) {
+      const div = document.createElement('div');
+      div.textContent = line;
+      this.floorCardSched.appendChild(div);
+    }
+    this.floorCard.classList.remove('hidden');
+    this.floorCard.classList.remove('leaving');
+    if (this.floorCardTimer) clearTimeout(this.floorCardTimer);
+    this.floorCardTimer = window.setTimeout(() => {
+      this.floorCard.classList.add('leaving');
+      this.floorCardTimer = window.setTimeout(
+        () => this.floorCard.classList.add('hidden'),
+        1600,
+      );
+    }, 7000);
   }
 
   pulseTab() {

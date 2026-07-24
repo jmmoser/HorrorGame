@@ -1,12 +1,20 @@
 import * as THREE from 'three';
 import { FLOORS } from './world/specs';
 import { PALETTES } from './world/palette';
-import { buildFloor, makeCollider, type ActiveTarget, type BuiltFloor } from './world/builder';
+import {
+  buildFloor,
+  makeCollider,
+  type ActiveTarget,
+  type BuiltFloor,
+  type MundaneTarget,
+  type NoticeTarget,
+} from './world/builder';
 import { fillTokens } from './world/discrepancies';
+import { AMENDMENTS, MUNDANE_TOASTS, MUNDANE_TOAST_WEARY, mundaneEntry } from './world/mundane';
 import { CS, WALL_H, cellCenter, charAt, facingToYaw, isWalkable } from './world/grid';
-import { floorRng } from './core/rng';
-import type { LedgerEntry, SaveData } from './core/types';
-import { writeSave } from './core/save';
+import { floorRng, hashCombine, mulberry32 } from './core/rng';
+import type { AlterationDef, EntryKind, LedgerEntry, SaveData } from './core/types';
+import { caseNumber, eraseSave, writeSave } from './core/save';
 import { Controls } from './player/controls';
 import { Player } from './player/player';
 import { AudioEngine } from './audio/audio';
@@ -19,12 +27,37 @@ import { shareCard } from './ui/share';
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
 const INTERACT_DIST = 5.0;
+/** seconds the inspector spends framing an observation before it is written */
+const DOC_TIME = 1.0;
+/** attention gained per act of documentation — the building reads the ledger */
+const ATTN = { real: 0.1, overQuota: 0.25, amend: 0.2, mundane: 0.07, notice: 0.04 };
+/** crossing these makes the building answer with an alteration of its own */
+const ATTN_THRESHOLDS = [0.3, 0.6];
+
+type AlterationKind = AlterationDef['kind'];
 
 interface PendingAlteration {
   anchor: string;
-  kind: 'door-ajar' | 'light-off' | 'light-on' | 'chair-turned';
+  kind: AlterationKind;
   hiddenFor: number;
 }
+
+/** an altered prop, loggable a second time as an amendment */
+interface AmendTarget {
+  anchor: string;
+  kind: AlterationKind;
+  hit: THREE.Mesh;
+  id: string;
+  logged: boolean;
+}
+
+type InteractHit =
+  | { kind: 'target'; target: ActiveTarget }
+  | { kind: 'mundane'; target: MundaneTarget }
+  | { kind: 'notice'; target: NoticeTarget }
+  | { kind: 'amend'; target: AmendTarget }
+  | { kind: 'call' }
+  | { kind: 'panel' };
 
 export class Game {
   readonly audio = new AudioEngine();
@@ -50,6 +83,15 @@ export class Game {
   private time = 0;
   private depthShown = 1;
   private pending: PendingAlteration[] = [];
+  /** the act of documentation: aim, hold the frame, then the pencil */
+  private documenting: { hit: InteractHit; t: number } | null = null;
+  private baseFov: number;
+  /** per-floor: how much the building has noticed the documentation */
+  private attention = 0;
+  private attnCrossed = 0;
+  private alteredAnchors = new Set<string>();
+  private amendTargets: AmendTarget[] = [];
+  private mundaneCount = 0;
   private walkableCenters: THREE.Vector3[] = [];
   private raycaster = new THREE.Raycaster();
   private frustum = new THREE.Frustum();
@@ -72,6 +114,7 @@ export class Game {
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);
+    this.baseFov = this.camera.fov;
     this.player = new Player(this.camera, this.controls);
     this.post = new PostFX(this.renderer, this.scene, this.camera);
     this.resize();
@@ -93,7 +136,7 @@ export class Game {
       const entry = this.save.ledger.length
         ? this.save.ledger[this.save.ledger.length - 1]
         : null;
-      await shareCard(this.save.floor, entry);
+      await shareCard(this.save.floor, entry, caseNumber(this.save.seed));
     };
     this.ledgerUI.onAlteredTap = () => this.logLedgerDiscrepancy();
 
@@ -144,6 +187,13 @@ export class Game {
       this.built = null;
     }
     this.pending = [];
+    this.documenting = null;
+    this.hud.setDocProgress(null);
+    this.attention = 0;
+    this.attnCrossed = 0;
+    this.alteredAnchors = new Set();
+    this.amendTargets = [];
+    this.mundaneCount = 0;
     if (floorNum > FLOORS.length) {
       this.beginEnding();
       return;
@@ -177,9 +227,20 @@ export class Game {
       if (this.save.logged.includes(t.sel.def.id)) {
         t.logged = true;
         const alt = t.sel.def.alteration;
-        if (alt) built.props.get(alt.anchor)?.applyAlteration?.(alt.kind);
+        if (alt) this.applyAlterationNow(alt.anchor, alt.kind);
       }
     }
+    // restore mundane logs and transcriptions (resume)
+    for (const m of built.mundanes) {
+      m.logged = this.save.logged.includes(`m-f${spec.floor}-${m.anchor}`);
+      if (m.logged) this.mundaneCount += 1;
+    }
+    for (const n of built.notices) {
+      n.logged = this.save.logged.includes(`note-f${spec.floor}-${n.anchor}`);
+    }
+    // recompute the building's attention from what was already logged here,
+    // replaying any responses it had already made
+    this.recomputeAttention(spec.floor, spec.quota);
 
     // spawn inside the car, facing the doors
     const el = built.grid.elevator;
@@ -190,6 +251,9 @@ export class Game {
     this.insideCarSince = 0;
 
     this.hud.setDepth(spec.floor);
+    window.setTimeout(() => {
+      if (this.built === built) this.hud.showFloorCard(spec.floor, spec.name, spec.schedule);
+    }, 1600);
     this.depthShown = spec.floor;
     this.haptics.setDepth(spec.floor);
     this.audio.setFloor(spec, spec.floor, floorRng(this.save.seed, spec.floor * 977));
@@ -197,7 +261,9 @@ export class Game {
 
     // floor 5: the ledger has been edited while the inspector was descending
     if (spec.floor === 5 && !this.save.ledgerAltered && this.save.ledger.length > 0) {
-      const first = this.save.ledger[0];
+      const first =
+        this.save.ledger.find((e) => (e.kind ?? 'discrepancy') === 'discrepancy') ??
+        this.save.ledger[0];
       first.originalText = first.text;
       first.altered = true;
       const firstSentence = first.text.split('.')[0];
@@ -247,28 +313,37 @@ export class Game {
     }
   }
 
-  private writeEntry(id: string, floor: number, text: string): LedgerEntry {
+  private writeEntry(
+    id: string,
+    floor: number,
+    text: string,
+    kind: EntryKind = 'discrepancy',
+    anchor?: string,
+    track = true,
+  ): LedgerEntry {
     const s = Math.floor(this.save.elapsed);
     const stamp = [
       String(Math.floor(s / 3600)).padStart(2, '0'),
       String(Math.floor((s % 3600) / 60)).padStart(2, '0'),
       String(s % 60).padStart(2, '0'),
     ].join(':');
-    const entry: LedgerEntry = { id, floor, stamp, text: fillTokens(text) };
+    const entry: LedgerEntry = { id, floor, stamp, text: fillTokens(text), kind, anchor };
     this.save.ledger.push(entry);
-    this.save.logged.push(id);
+    if (track) this.save.logged.push(id);
     return entry;
   }
 
   private logTarget(t: ActiveTarget) {
     if (t.logged || !this.built) return;
     t.logged = true;
-    this.writeEntry(t.sel.def.id, this.built.spec.floor, t.sel.entry);
+    this.writeEntry(t.sel.def.id, this.built.spec.floor, t.sel.entry, 'discrepancy', t.sel.def.anchor);
     this.audio.pencil();
     this.hud.showToast(t.sel.def.toast);
     this.hud.pulseTab();
     const alt = t.sel.def.alteration;
     if (alt) this.pending.push({ anchor: alt.anchor, kind: alt.kind, hiddenFor: 0 });
+    const { logged, quota } = this.selectedQuotaProgress();
+    this.bumpAttention(logged > quota ? ATTN.overQuota : ATTN.real);
     this.refreshQuota(true);
     this.persist();
   }
@@ -286,12 +361,163 @@ export class Game {
     if (this.ledgerUI.isOpen) this.openLedger();
   }
 
+  private logMundane(m: MundaneTarget) {
+    if (m.logged || !this.built) return;
+    m.logged = true;
+    const floor = this.built.spec.floor;
+    const anchor = this.built.spec.anchors[m.anchor];
+    const rng = mulberry32(hashCombine(this.save.seed, floor * 333 + m.anchor.charCodeAt(0)));
+    const text = (anchor && mundaneEntry(anchor, rng)) ?? 'As filed. No deviation.';
+    this.writeEntry(`m-f${floor}-${m.anchor}`, floor, text, 'mundane', m.anchor);
+    this.audio.pencil();
+    this.mundaneCount += 1;
+    this.hud.showToast(
+      this.mundaneCount >= 3
+        ? MUNDANE_TOAST_WEARY
+        : MUNDANE_TOASTS[(this.mundaneCount - 1) % MUNDANE_TOASTS.length],
+    );
+    this.bumpAttention(ATTN.mundane);
+    this.persist();
+  }
+
+  private logNotice(n: NoticeTarget) {
+    if (n.logged || !this.built) return;
+    n.logged = true;
+    const floor = this.built.spec.floor;
+    this.writeEntry(`note-f${floor}-${n.anchor}`, floor, n.entry, 'notice', n.anchor);
+    this.audio.pencil();
+    this.hud.showToast('transcribed into the ledger');
+    this.hud.pulseTab();
+    this.bumpAttention(ATTN.notice);
+    this.persist();
+  }
+
+  private logAmend(a: AmendTarget) {
+    if (a.logged || !this.built) return;
+    a.logged = true;
+    const floor = this.built.spec.floor;
+    this.writeEntry(a.id, floor, AMENDMENTS[a.kind].entry, 'amend', a.anchor);
+    this.audio.pencil();
+    this.hud.showToast(AMENDMENTS[a.kind].toast);
+    this.hud.pulseTab();
+    this.bumpAttention(ATTN.amend);
+    this.persist();
+  }
+
+  // ------------------------------------------------- the building's answers
+
+  /** apply an alteration immediately and make the changed prop re-loggable */
+  private applyAlterationNow(anchor: string, kind: AlterationKind) {
+    const built = this.built;
+    if (!built) return;
+    const prop = built.props.get(anchor);
+    if (!prop?.applyAlteration) return;
+    prop.applyAlteration(kind);
+    this.alteredAnchors.add(anchor);
+    if (!prop.hit) return;
+    const id = `amend-f${built.spec.floor}-${anchor}`;
+    if (this.amendTargets.some((a) => a.id === id)) return;
+    this.amendTargets.push({
+      anchor,
+      kind,
+      hit: prop.hit,
+      id,
+      logged: this.save.logged.includes(id),
+    });
+  }
+
+  private bumpAttention(v: number) {
+    this.attention += v;
+    while (
+      this.attnCrossed < ATTN_THRESHOLDS.length &&
+      this.attention >= ATTN_THRESHOLDS[this.attnCrossed]
+    ) {
+      this.attnCrossed += 1;
+      this.queueAmbientAlteration(this.attnCrossed);
+      this.audio.provoke();
+    }
+    this.audio.setAttention(Math.min(1, this.attention));
+  }
+
+  /** the building answers documentation with a change of its own — queued
+   *  through the same never-on-screen machinery as authored alterations */
+  private queueAmbientAlteration(idx: number, instant = false) {
+    const built = this.built;
+    if (!built) return;
+    const pick = this.pickAmbientAlteration(idx);
+    if (!pick) return;
+    if (instant) this.applyAlterationNow(pick.anchor, pick.kind);
+    else this.pending.push({ anchor: pick.anchor, kind: pick.kind, hiddenFor: 0 });
+  }
+
+  private pickAmbientAlteration(idx: number): { anchor: string; kind: AlterationKind } | null {
+    const built = this.built;
+    if (!built) return null;
+    const targetAnchors = new Set(built.targets.map((t) => t.sel.def.anchor));
+    const candidates: Array<{ anchor: string; kind: AlterationKind }> = [];
+    for (const [letter, def] of Object.entries(built.spec.anchors)) {
+      const prop = built.props.get(letter);
+      if (!prop?.applyAlteration || !prop.hit) continue;
+      if (this.alteredAnchors.has(letter) || targetAnchors.has(letter)) continue;
+      if (this.pending.some((p) => p.anchor === letter)) continue;
+      if (def.role === 'door') candidates.push({ anchor: letter, kind: 'door-ajar' });
+      else if (def.role === 'chair') candidates.push({ anchor: letter, kind: 'chair-turned' });
+      else if (def.role === 'light') {
+        candidates.push({ anchor: letter, kind: prop.lit ? 'light-off' : 'light-on' });
+      }
+    }
+    if (candidates.length === 0) return null;
+    const rng = floorRng(this.save.seed, built.spec.floor * 131 + idx * 17);
+    return candidates[Math.floor(rng() * candidates.length)];
+  }
+
+  /** on resume: rebuild attention from the ids already logged on this floor
+   *  and re-apply any responses the building had already made */
+  private recomputeAttention(floor: number, quota: number) {
+    const ids = this.save.logged;
+    const real = ids.filter((id) => id.startsWith(`f${floor}-`)).length;
+    const mundane = ids.filter((id) => id.startsWith(`m-f${floor}-`)).length;
+    const amends = ids.filter((id) => id.startsWith(`amend-f${floor}-`)).length;
+    const notes = ids.filter((id) => id.startsWith(`note-f${floor}-`)).length;
+    this.attention =
+      ATTN.real * Math.min(real, quota) +
+      ATTN.overQuota * Math.max(0, real - quota) +
+      ATTN.mundane * mundane +
+      ATTN.amend * amends +
+      ATTN.notice * notes;
+    while (
+      this.attnCrossed < ATTN_THRESHOLDS.length &&
+      this.attention >= ATTN_THRESHOLDS[this.attnCrossed]
+    ) {
+      this.attnCrossed += 1;
+      this.queueAmbientAlteration(this.attnCrossed, true);
+    }
+    this.audio.setAttention(Math.min(1, this.attention));
+  }
+
+  private cancelDocumenting() {
+    if (!this.documenting) return;
+    this.documenting = null;
+    this.hud.setDocProgress(null);
+    if (this.state === 'play' && !this.ledgerUI.isOpen) this.player.frozen = false;
+  }
+
+  private commitDocumenting(hit: InteractHit) {
+    if (hit.kind === 'target') this.logTarget(hit.target);
+    else if (hit.kind === 'mundane') this.logMundane(hit.target);
+    else if (hit.kind === 'notice') this.logNotice(hit.target);
+    else if (hit.kind === 'amend') this.logAmend(hit.target);
+  }
+
   private inspect() {
-    if (this.state !== 'play' || !this.built || this.ledgerUI.isOpen) return;
+    if (this.state !== 'play' || !this.built || this.ledgerUI.isOpen || this.documenting) return;
     const hit = this.raycastInteract();
     if (!hit) return;
-    if (hit.kind === 'target') {
-      this.logTarget(hit.target);
+    if (hit.kind === 'target' || hit.kind === 'mundane' || hit.kind === 'notice' || hit.kind === 'amend') {
+      // documentation is an act, not a tap: hold the frame, then the pencil
+      this.documenting = { hit, t: 0 };
+      this.player.frozen = true;
+      this.hud.setDocProgress(0);
     } else if (hit.kind === 'call') {
       if (this.built.elevator.callActive) {
         this.audio.buttonPress();
@@ -312,30 +538,59 @@ export class Game {
     }
   }
 
-  private raycastInteract():
-    | { kind: 'target'; target: ActiveTarget }
-    | { kind: 'call' }
-    | { kind: 'panel' }
-    | null {
+  private raycastInteract(): InteractHit | null {
     if (!this.built) return null;
     this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
     this.raycaster.far = INTERACT_DIST;
     const meshes: THREE.Mesh[] = [];
-    const lookup = new Map<THREE.Mesh, ActiveTarget>();
+    const targets = new Map<THREE.Mesh, ActiveTarget>();
+    const mundanes = new Map<THREE.Mesh, MundaneTarget>();
+    const notices = new Map<THREE.Mesh, NoticeTarget>();
+    const amends = new Map<THREE.Mesh, AmendTarget>();
+    for (const a of this.amendTargets) {
+      if (!a.logged) {
+        meshes.push(a.hit);
+        amends.set(a.hit, a);
+      }
+    }
     for (const t of this.built.targets) {
       if (!t.logged) {
         meshes.push(t.hit);
-        lookup.set(t.hit, t);
+        targets.set(t.hit, t);
+      }
+    }
+    for (const n of this.built.notices) {
+      if (!n.logged) {
+        meshes.push(n.hit);
+        notices.set(n.hit, n);
+      }
+    }
+    for (const m of this.built.mundanes) {
+      // an altered prop is an amendment now, not a "no deviation"
+      if (!m.logged && !this.alteredAnchors.has(m.anchor)) {
+        meshes.push(m.hit);
+        mundanes.set(m.hit, m);
       }
     }
     meshes.push(this.built.elevator.buttonHit, this.built.elevator.panelHit);
     const hits = this.raycaster.intersectObjects(meshes, false);
     if (hits.length === 0) return null;
-    const first = hits[0].object as THREE.Mesh;
-    const t = lookup.get(first);
-    if (t) return { kind: 'target', target: t };
-    if (first === this.built.elevator.buttonHit) return { kind: 'call' };
-    if (first === this.built.elevator.panelHit) return { kind: 'panel' };
+    // don't let hitboxes read through walls
+    const wallD = this.aimDistance(this.raycaster.ray.origin, this.raycaster.ray.direction);
+    for (const h of hits) {
+      if (h.distance > wallD + 0.6) break;
+      const mesh = h.object as THREE.Mesh;
+      const a = amends.get(mesh);
+      if (a) return { kind: 'amend', target: a };
+      const t = targets.get(mesh);
+      if (t) return { kind: 'target', target: t };
+      const n = notices.get(mesh);
+      if (n) return { kind: 'notice', target: n };
+      const m = mundanes.get(mesh);
+      if (m) return { kind: 'mundane', target: m };
+      if (mesh === this.built.elevator.buttonHit) return { kind: 'call' };
+      if (mesh === this.built.elevator.panelHit) return { kind: 'panel' };
+    }
     return null;
   }
 
@@ -386,11 +641,34 @@ export class Game {
 
   private beginDeparture() {
     if (!this.built || this.state !== 'play') return;
+    this.cancelDocumenting();
+    this.fileFloor();
     this.state = 'departing';
     this.stateT = 0;
     this.player.frozen = true;
     this.built.elevator.closeDoors();
     this.audio.doorSlide(false);
+  }
+
+  /** the closing ritual: a filed summary line ruled under the floor's entries */
+  private fileFloor() {
+    if (!this.built) return;
+    const f = this.built.spec.floor;
+    const id = `filed-f${f}`;
+    if (this.save.ledger.some((e) => e.id === id)) return;
+    const onFloor = this.save.ledger.filter((e) => e.floor === f);
+    const count = (k: EntryKind) => onFloor.filter((e) => (e.kind ?? 'discrepancy') === k).length;
+    const disc = count('discrepancy');
+    const amends = count('amend');
+    const obs = count('mundane') + count('notice');
+    this.writeEntry(
+      id,
+      f,
+      `FLOOR −${String(f).padStart(2, '0')} FILED · ${disc} DISCREPANCIES · ${amends} AMENDMENTS · ${obs} OBSERVATIONS`,
+      'filed',
+      undefined,
+      false,
+    );
   }
 
   private beginEnding() {
@@ -401,6 +679,10 @@ export class Game {
     this.setFade(true);
     this.audio.duck();
     this.haptics.stop();
+    const countKind = (k: EntryKind) =>
+      this.save.ledger.filter((e) => (e.kind ?? 'discrepancy') === k).length;
+    const disc = countKind('discrepancy');
+    const amends = countKind('amend');
     const title = document.getElementById('title')!;
     title.classList.remove('hidden');
     title.classList.remove('fading');
@@ -413,13 +695,22 @@ export class Game {
           The elevator has not stopped.<br/><br/>
           The inspection continues.
         </p>
+        <p class="title-visitor" style="display:block">
+          ${disc} DISCREPANCIES · ${amends} AMENDMENTS · ${caseNumber(this.save.seed)}
+        </p>
         <button id="btn-end-share" class="ghost-btn">tear out a page</button>
+        <button id="btn-end-new" class="ghost-btn">request reassignment</button>
       </div>`;
     document.getElementById('btn-end-share')!.addEventListener('click', async () => {
       const entry = this.save.ledger.length
         ? this.save.ledger[this.save.ledger.length - 1]
         : null;
-      await shareCard(this.depthShown, entry);
+      await shareCard(this.depthShown, entry, caseNumber(this.save.seed));
+    });
+    // a new case number: a different building, wearing the same building
+    document.getElementById('btn-end-new')!.addEventListener('click', () => {
+      eraseSave();
+      location.reload();
     });
     this.hud.hide();
     this.controls.enabled = false;
@@ -440,9 +731,18 @@ export class Game {
 
   private openLedger() {
     if (!this.built) return;
+    this.cancelDocumenting();
     this.audio.pageTurn();
     const { logged, quota } = this.selectedQuotaProgress();
-    this.ledgerUI.open(this.save.ledger, this.built.spec.floor, logged, quota, this.built.spec.map);
+    this.ledgerUI.open(
+      this.save.ledger,
+      this.built.spec.floor,
+      logged,
+      quota,
+      this.built.spec.map,
+      this.built.spec.schedule,
+      caseNumber(this.save.seed),
+    );
     this.player.frozen = true;
   }
 
@@ -469,7 +769,20 @@ export class Game {
       }
     } else if (this.state === 'play') {
       this.save.elapsed += dt;
-      if (!this.ledgerUI.isOpen) this.player.frozen = false;
+      if (!this.ledgerUI.isOpen && !this.documenting) this.player.frozen = false;
+
+      // the act of documentation: hold the frame until the pencil moves
+      if (this.documenting) {
+        this.documenting.t += dt;
+        this.hud.setDocProgress(this.documenting.t / DOC_TIME);
+        if (this.documenting.t >= DOC_TIME) {
+          const hit = this.documenting.hit;
+          this.documenting = null;
+          this.hud.setDocProgress(null);
+          this.commitDocumenting(hit);
+          if (!this.ledgerUI.isOpen) this.player.frozen = false;
+        }
+      }
 
       // close doors behind the player once they've stepped away
       if (!this.exitedCar && this.distToCar() > 2.8) {
@@ -504,6 +817,13 @@ export class Game {
     }
 
     if (this.collide) this.player.update(dt, this.collide);
+
+    // documenting narrows the frame a breath — attention made physical
+    const fovTarget = this.documenting ? this.baseFov - 4 : this.baseFov;
+    if (Math.abs(this.camera.fov - fovTarget) > 0.01) {
+      this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 6);
+      this.camera.updateProjectionMatrix();
+    }
 
     // flashlight follows the camera with a breath of lag
     const camPos = this.camera.position;
@@ -545,7 +865,7 @@ export class Game {
         const unseen = !this.frustum.containsPoint(pos) && playerV.distanceTo(pos) > 5.5;
         p.hiddenFor = unseen ? p.hiddenFor + dt : 0;
         if (p.hiddenFor > 1.6) {
-          prop.applyAlteration(p.kind);
+          this.applyAlterationNow(p.anchor, p.kind);
           return false;
         }
         return true;
@@ -557,9 +877,11 @@ export class Game {
     this.audio.updateListener(this.camera, playerV);
     if (this.state === 'play') {
       this.audio.tick(playerV, () => {
+        // an interested building lets its sounds come closer
+        const minD = 8 - 5 * this.audio.attention;
         const candidates = this.walkableCenters.filter((c) => {
           const d = c.distanceTo(playerV);
-          return d > 8 && d < 26;
+          return d > minD && d < 26;
         });
         if (candidates.length === 0) return null;
         return candidates[Math.floor(Math.random() * candidates.length)];
@@ -605,6 +927,22 @@ export class Game {
         this.built?.targets.forEach((t) => this.logTarget(t));
         this.logLedgerDiscrepancy();
       },
+      logMundane: () => {
+        const m = this.built?.mundanes.find((x) => !x.logged && !this.alteredAnchors.has(x.anchor));
+        if (m) this.logMundane(m);
+      },
+      logNotice: () => {
+        const n = this.built?.notices.find((x) => !x.logged);
+        if (n) this.logNotice(n);
+      },
+      applyAlteration: (anchor: string, kind: AlterationKind) =>
+        this.applyAlterationNow(anchor, kind),
+      logAmend: () => {
+        const a = this.amendTargets.find((x) => !x.logged);
+        if (a) this.logAmend(a);
+      },
+      attention: () => this.attention,
+      amendTargets: () => this.amendTargets,
       depart: () => {
         if (this.built) {
           const el = this.built.grid.elevator;

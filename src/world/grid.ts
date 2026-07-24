@@ -137,7 +137,7 @@ export function findAnchorCell(rows: string[], letter: string): [number, number]
   return null;
 }
 
-const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink']);
+const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink', 'notice']);
 
 /** Author-time sanity checks. Run in dev and by scripts/validate-floors. */
 export function validateSpec(spec: FloorSpec): string[] {
@@ -174,6 +174,9 @@ export function validateSpec(spec: FloorSpec): string[] {
   for (const [ch, def] of Object.entries(spec.anchors)) {
     const cell = findAnchorCell(rows, ch);
     if (!cell) continue;
+    if (def.role === 'notice' && !def.notice) {
+      errors.push(`notice anchor '${ch}' has no notice text`);
+    }
     if (WALL_MOUNTED.has(def.role)) {
       const back = opposite(def.facing);
       const [dx, dz] = DIRS[back];

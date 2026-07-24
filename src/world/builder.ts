@@ -28,12 +28,30 @@ export interface ActiveTarget {
   worldPos: THREE.Vector3;
 }
 
+/** a prop that is exactly what it should be — loggable anyway */
+export interface MundaneTarget {
+  anchor: string;
+  hit: THREE.Mesh;
+  prop: PropInstance;
+  logged: boolean;
+}
+
+/** wall paper the inspector can transcribe into the ledger */
+export interface NoticeTarget {
+  anchor: string;
+  hit: THREE.Mesh;
+  entry: string;
+  logged: boolean;
+}
+
 export interface BuiltFloor {
   spec: FloorSpec;
   group: THREE.Group;
   grid: Grid;
   updatables: Array<(dt: number, time: number) => void>;
   targets: ActiveTarget[];
+  mundanes: MundaneTarget[];
+  notices: NoticeTarget[];
   /** the guaranteed anchor-less discrepancy (floor 5's altered ledger), if any */
   ledgerDiscrepancy: SelectedDiscrepancy | null;
   elevator: ElevatorRig;
@@ -270,9 +288,11 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   // ---- props
   const props = new Map<string, PropInstance>();
   const targets: ActiveTarget[] = [];
+  const mundanes: MundaneTarget[] = [];
+  const notices: NoticeTarget[] = [];
   const audioSpots: BuiltFloor['audioSpots'] = [];
   const litPositions: THREE.Vector3[] = [];
-  const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink']);
+  const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink', 'notice']);
 
   for (const [letter, anchor] of Object.entries(spec.anchors)) {
     let cx = -1;
@@ -336,6 +356,11 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
         logged: false,
         worldPos: new THREE.Vector3(c.x, 1.2, c.z),
       });
+    } else if (anchor.role === 'notice' && prop.hit && anchor.notice) {
+      notices.push({ anchor: letter, hit: prop.hit, entry: anchor.notice.entry, logged: false });
+    } else if (prop.hit) {
+      // everything else can be logged too. being correct is also a finding.
+      mundanes.push({ anchor: letter, hit: prop.hit, prop, logged: false });
     }
   }
 
@@ -380,6 +405,8 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     grid,
     updatables,
     targets,
+    mundanes,
+    notices,
     ledgerDiscrepancy,
     elevator,
     props,
