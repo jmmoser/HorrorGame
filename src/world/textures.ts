@@ -353,3 +353,29 @@ export function paperTexture(fresh: boolean, seed: number): THREE.CanvasTexture 
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+/** a pinned notice: aged paper, short typed lines, legible at arm's length */
+export function noticeTexture(lines: string[], seed: number): THREE.CanvasTexture {
+  const rng = mulberry32(seed ^ 0x0071ce);
+  const { c, g } = makeCanvas(256, 320);
+  g.fillStyle = '#b6ac92';
+  g.fillRect(0, 0, 256, 320);
+  g.strokeStyle = 'rgba(60,52,38,0.5)';
+  g.lineWidth = 3;
+  g.strokeRect(6, 6, 244, 308);
+  // rusted pin shadow at the top
+  g.fillStyle = '#4a3524';
+  g.beginPath();
+  g.arc(128, 22, 6, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = 'rgba(35,30,22,0.88)';
+  g.font = 'bold 22px "Courier New", monospace';
+  g.textAlign = 'center';
+  const top = 160 - (lines.length - 1) * 17;
+  lines.forEach((line, i) => g.fillText(line, 128, top + i * 34));
+  stains(g, 256, 320, rng, 4, 0.14);
+  grain(g, 256, 320, rng, 0.05, 340);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

@@ -29,6 +29,9 @@ export class AudioEngine {
   private floorSpec: FloorSpec | null = null;
   private rng: Rng = Math.random;
   private listenerPos = new THREE.Vector3();
+  /** 0..1 — how interested the building currently is. raises event density. */
+  private attn = 0;
+  private ducked = false;
 
   get unlocked(): boolean {
     return this.ctx !== null;
@@ -107,6 +110,8 @@ export class AudioEngine {
   setFloor(spec: FloorSpec, depth: number, rng: Rng) {
     this.floorSpec = spec;
     this.rng = rng;
+    this.attn = 0;
+    this.ducked = false;
     if (!this.ctx) return;
     this.ramp(this.roomGain.gain, 0.014, 3);
     this.ramp(this.humGain.gain, 0.008 * spec.hum + 0.002, 3);
@@ -118,10 +123,29 @@ export class AudioEngine {
   /** quiet between floors */
   duck() {
     if (!this.ctx) return;
+    this.ducked = true;
     this.ramp(this.roomGain.gain, 0.004, 1.2);
     this.ramp(this.humGain.gain, 0.002, 1.2);
     this.stopOccupancy();
     this.stopSpots();
+  }
+
+  /** the building's interest. more of it = occupancy sooner, closer, and a
+   *  slightly thicker room. always gradual, never a spike. */
+  setAttention(a: number) {
+    this.attn = Math.max(0, Math.min(1, a));
+    if (!this.ctx || this.ducked) return;
+    this.ramp(this.roomGain.gain, 0.014 + this.attn * 0.006, 5);
+  }
+
+  get attention(): number {
+    return this.attn;
+  }
+
+  /** pull the next occupancy event close — a response, not an ambush */
+  provoke() {
+    const now = performance.now() / 1000;
+    this.nextEventAt = Math.min(this.nextEventAt, now + 8 + this.rng() * 9);
   }
 
   // -------------------------------------------------------------- one-shots
@@ -332,7 +356,7 @@ export class AudioEngine {
       return true;
     });
     if (now >= this.nextEventAt && this.floorSpec.occupancy.length > 0) {
-      this.nextEventAt = now + 40 + this.rng() * 70;
+      this.nextEventAt = now + (40 + this.rng() * 70) * (1 - 0.65 * this.attn);
       const kind = this.floorSpec.occupancy[Math.floor(this.rng() * this.floorSpec.occupancy.length)];
       const pos = kind === 'below'
         ? playerPos.clone().add(new THREE.Vector3((this.rng() - 0.5) * 6, -2.6, (this.rng() - 0.5) * 6))

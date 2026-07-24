@@ -35,6 +35,13 @@ export function writeSave(data: SaveData): void {
   }
 }
 
+/** the seed, worn as a case number — printed on the ledger, the share card,
+ *  and the title screen. two inspectors with the same case number walk the
+ *  same building. */
+export function caseNumber(seed: number): string {
+  return `CASE S7-${(seed >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+}
+
 export function eraseSave(): void {
   try {
     localStorage.removeItem(KEY);

@@ -84,6 +84,25 @@ for (let floor = 1; floor <= 5; floor++) {
     await page.waitForTimeout(300);
   }
 
+  // floor 1 also exercises the judgment systems: a mundane log, a notice
+  // transcription, and an amendment on a building-altered prop
+  if (floor === 1) {
+    const extras = await page.evaluate(() => {
+      const d = window.__game.debug;
+      d.logMundane();
+      d.logNotice();
+      d.applyAlteration('v', 'door-ajar');
+      d.logAmend();
+      const kinds = d.save.ledger.map((e) => e.kind ?? 'discrepancy');
+      return { kinds, attention: d.attention(), amendables: d.amendTargets().length };
+    });
+    console.log(`floor 1 extras: kinds=[${extras.kinds.join(', ')}] attention=${extras.attention.toFixed(2)}`);
+    for (const want of ['mundane', 'notice', 'amend']) {
+      if (!extras.kinds.includes(want)) errors.push(`floor 1: missing ${want} entry after debug drive`);
+    }
+    if (!(extras.attention > 0)) errors.push('floor 1: attention did not rise');
+  }
+
   await page.evaluate(() => window.__game.debug.logAllTargets());
   await page.waitForTimeout(600);
   const callActive = await page.evaluate(() => window.__game.debug.built.elevator.callActive);

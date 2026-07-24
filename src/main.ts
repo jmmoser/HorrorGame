@@ -1,7 +1,7 @@
 import './styles.css';
 import { Game, devValidate } from './game';
 import { Controls } from './player/controls';
-import { freshSave, loadSave } from './core/save';
+import { caseNumber, freshSave, loadSave } from './core/save';
 import { inboundShareFloor } from './ui/share';
 import { registerSW } from 'virtual:pwa-register';
 
@@ -26,6 +26,10 @@ function showTitle() {
     btnResume.classList.remove('hidden');
     document.getElementById('resume-floor')!.textContent = `−${String(existing.floor).padStart(2, '0')}`;
     btnBegin.textContent = 'begin again';
+    // the case number is the seed — same case, same building. compare notes.
+    const caseEl = document.getElementById('title-case')!;
+    caseEl.textContent = caseNumber(existing.seed);
+    caseEl.classList.remove('hidden');
   }
 
   const inbound = inboundShareFloor();

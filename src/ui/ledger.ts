@@ -1,14 +1,25 @@
 import type { LedgerEntry } from '../core/types';
-import { parseRows } from '../world/grid';
+import { findAnchorCell, parseRows } from '../world/grid';
 
 // The ledger: the inspector's own record, and eventually the thing that
 // cannot be trusted. Blueprint is drawn from the AUTHORED map — when the
 // building disagrees with it, the building is what's lying. Probably.
+// Logged discrepancies and amendments are marked on the drawing in red ink,
+// where the inspector found them. The schedule block above the blueprint is
+// the baseline the player checks the floor against.
+
+const KIND_LABEL: Record<string, string> = {
+  mundane: 'NO DEVIATION',
+  amend: 'AMENDMENT',
+  notice: 'TRANSCRIPT',
+};
 
 export class LedgerUI {
   private root = document.getElementById('ledger')!;
   private entriesEl = document.getElementById('ledger-entries')!;
   private quotaEl = document.getElementById('ledger-quota')!;
+  private caseEl = document.getElementById('ledger-case')!;
+  private schedEl = document.getElementById('ledger-schedule')!;
   private blueprint = document.getElementById('blueprint') as HTMLCanvasElement;
   /** set while an altered entry is waiting to be noticed */
   onAlteredTap: ((entry: LedgerEntry) => void) | null = null;
@@ -24,9 +35,29 @@ export class LedgerUI {
     return !this.root.classList.contains('hidden');
   }
 
-  open(entries: LedgerEntry[], floor: number, logged: number, quota: number, map: string) {
+  open(
+    entries: LedgerEntry[],
+    floor: number,
+    logged: number,
+    quota: number,
+    map: string,
+    schedule: string[],
+    caseNum: string,
+  ) {
     this.quotaEl.textContent = `FLOOR −${String(floor).padStart(2, '0')} · ${logged} OF ${quota} LOGGED`;
-    this.drawBlueprint(map);
+    this.caseEl.textContent = caseNum;
+    this.schedEl.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'sched-head';
+    head.textContent = 'SCHEDULE — AS FILED';
+    this.schedEl.appendChild(head);
+    for (const line of schedule) {
+      const div = document.createElement('div');
+      div.className = 'sched-line';
+      div.textContent = line;
+      this.schedEl.appendChild(div);
+    }
+    this.drawBlueprint(map, entries, floor);
     this.renderEntries(entries);
     this.root.classList.remove('hidden');
   }
@@ -44,12 +75,23 @@ export class LedgerUI {
       this.entriesEl.appendChild(empty);
       return;
     }
-    entries.forEach((e, i) => {
+    let no = 0;
+    entries.forEach((e) => {
+      const kind = e.kind ?? 'discrepancy';
+      if (kind === 'filed') {
+        const div = document.createElement('div');
+        div.className = 'entry-filed';
+        div.textContent = e.text;
+        this.entriesEl.appendChild(div);
+        return;
+      }
+      no += 1;
       const div = document.createElement('div');
-      div.className = 'entry' + (e.altered ? ' altered' : '');
+      div.className = `entry entry-${kind}` + (e.altered ? ' altered' : '');
       const meta = document.createElement('div');
       meta.className = 'entry-meta';
-      meta.textContent = `NO. ${String(i + 1).padStart(3, '0')} · FLOOR −${String(e.floor).padStart(2, '0')} · ${e.stamp}`;
+      const label = KIND_LABEL[kind] ? ` · ${KIND_LABEL[kind]}` : '';
+      meta.textContent = `NO. ${String(no).padStart(3, '0')} · FLOOR −${String(e.floor).padStart(2, '0')} · ${e.stamp}${label}`;
       const body = document.createElement('div');
       body.textContent = e.text;
       div.appendChild(meta);
@@ -62,7 +104,7 @@ export class LedgerUI {
     });
   }
 
-  private drawBlueprint(map: string) {
+  private drawBlueprint(map: string, entries: LedgerEntry[], floor: number) {
     const rows = parseRows(map);
     const g = this.blueprint.getContext('2d')!;
     const W = this.blueprint.width;
@@ -101,6 +143,38 @@ export class LedgerUI {
         }
       }
     }
+
+    // red-ink marks where this floor's discrepancies and amendments were found.
+    // marks live on the AUTHORED drawing — the world may disagree.
+    let no = 0;
+    for (const e of entries) {
+      const kind = e.kind ?? 'discrepancy';
+      if (kind === 'filed') continue;
+      no += 1;
+      if (e.floor !== floor || !e.anchor) continue;
+      if (kind !== 'discrepancy' && kind !== 'amend') continue;
+      const cell = findAnchorCell(rows, e.anchor);
+      if (!cell) continue;
+      const mx = ox + (cell[0] + 0.5) * s;
+      const my = oy + (cell[1] + 0.5) * s;
+      g.strokeStyle = kind === 'amend' ? 'rgba(122,32,32,0.55)' : 'rgba(122,32,32,0.85)';
+      g.lineWidth = 1.4;
+      g.beginPath();
+      // a slightly unsteady hand-drawn circle
+      for (let a = 0; a <= Math.PI * 2 + 0.2; a += 0.4) {
+        const r = s * 0.85 + Math.sin(a * 3 + no) * 0.8;
+        const px = mx + Math.cos(a) * r;
+        const py = my + Math.sin(a) * r;
+        if (a === 0) g.moveTo(px, py);
+        else g.lineTo(px, py);
+      }
+      g.stroke();
+      g.fillStyle = 'rgba(122,32,32,0.9)';
+      g.font = '10px "Courier New", monospace';
+      g.textAlign = 'left';
+      g.fillText(String(no), mx + s * 0.95, my - s * 0.5);
+    }
+
     g.fillStyle = 'rgba(58,54,44,0.9)';
     g.font = '11px "Courier New", monospace';
     g.textAlign = 'left';

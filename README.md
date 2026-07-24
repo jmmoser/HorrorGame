@@ -18,9 +18,18 @@ certainty that the building knows it is being documented.
 - **Five hand-authored floors**, one controlled palette each: fluorescent
   green offices, a sodium-orange residential corridor, moonlight-blue open
   plan, tungsten archive stacks, and a near-dark lower lobby.
-- **The full core loop** — the elevator opens onto a floor; find and log the
-  discrepancies by looking closely and tapping them; the call button lights;
-  descend.
+- **The full core loop** — the elevator opens onto a floor with its **filed
+  schedule** ("ROOMS 101–105 · TWO CORRIDOR DOORS"); find the discrepancies by
+  checking the building against the schedule and the blueprint; log them; the
+  call button lights; descend.
+- **Everything is loggable.** Every prop can be documented, not just the wrong
+  ones — the reticle marks what can be aimed at, never what is wrong. Logging
+  a correct desk writes a dry "no deviation" entry. Judgment is the game:
+  the schedule and blueprint are the only authorities on what shouldn't be
+  there, and being thorough has a cost (see attention, below).
+- **Documentation is an act, not a tap.** Logging holds the frame for a
+  second — a ring fills, the FOV narrows a breath, you cannot move — before
+  the pencil writes. The building's favorite moment to make a sound.
 - **The wrongness system** — 15 discrepancy types across Tiers 1–2
   (architectural and temporal): a door that is not on the blueprint, a
   corridor longer than the one above it, a window showing daylight at night,
@@ -33,12 +42,29 @@ certainty that the building knows it is being documented.
 - **Logging changes the floor.** Some discrepancies, once logged, silently
   change something elsewhere — a closed door now ajar, a corridor light now
   dead. Changes are never shown happening. They are only ever discovered.
+- **Amendments.** A changed prop can be logged a *second* time — a red-ink
+  amendment ("the door I recorded closed is standing open"). Backtracking is
+  rewarded; the record becomes a correspondence with the building.
+- **Attention.** The building reads the ledger. Every entry past the quota,
+  every amendment, every "no deviation" raises its attention on that floor:
+  occupancy sounds come sooner and closer, the room tone thickens, and at
+  thresholds the building answers with alterations of its own — which become
+  new amendments to find. Curiosity vs. nerve is the floor-level decision:
+  the call button is lit, and you are still writing.
+- **Notices.** Pinned paper — a lettings suspension, a tenant's note, a
+  retrieval slip for the building's own file — can be read and transcribed
+  into the ledger.
 - **The Tier 3 climax on floor −05** — an entry you wrote earlier in your own
   ledger has been rewritten while you were descending.
-- **The ledger** — diegetic journal UI with a drafted blueprint per floor
-  (drawn from the *authored* map, which the building does not always agree
-  with), your entries, and a tear-out **share card** (Web Share / download +
-  link).
+- **The ledger** — diegetic journal UI with the floor's filed schedule, a
+  drafted blueprint per floor (drawn from the *authored* map, which the
+  building does not always agree with), red-ink marks where each finding was
+  logged, ruled-off "FLOOR −0N FILED" lines when you descend, and a tear-out
+  **share card** (Web Share / download + link). The player's seed is worn as
+  a **case number** (CASE S7-…) on the title screen, the ledger head, and the
+  share card — two inspectors on the same case walk the same building.
+- **The ending offers reassignment** — a new case number, a rerolled
+  building.
 - **Mobile + desktop controls** — virtual stick + drag look + tap to log,
   with gyroscope as an additive layer (the building shifts when you
   physically lean); WASD + pointer lock + click on desktop.
@@ -95,6 +121,7 @@ src/
     props.ts   every object, each with a normal and a wrong variant
     textures.ts all surfaces + signage as generated canvas textures
     discrepancies.ts  the wrongness pass: seeded selection + rare variants
+    mundane.ts "no deviation" entries for correct props + amendment text
     palette.ts one controlled palette per floor
   player/      controls (touch / desktop / gyro), movement + collision
   audio/       synthesized WebAudio engine + haptics

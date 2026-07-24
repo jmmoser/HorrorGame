@@ -6,6 +6,7 @@ import {
   clockFaceTexture,
   doorTexture,
   footprintTexture,
+  noticeTexture,
   paperTexture,
   phoneDialTexture,
   puffTexture,
@@ -20,12 +21,14 @@ import {
 export interface PropInstance {
   group: THREE.Group;
   update?: (dt: number, time: number) => void;
-  /** invisible raycast target when this prop is a loggable discrepancy */
+  /** invisible raycast target — every prop can be aimed at and logged */
   hit?: THREE.Mesh;
   /** silent post-log floor mutation */
   applyAlteration?: (kind: 'door-ajar' | 'light-off' | 'light-on' | 'chair-turned') => void;
   light?: THREE.PointLight;
   audioKind?: 'dialtone' | 'drip';
+  /** current fixture state, kept truthful across alterations */
+  lit?: boolean;
 }
 
 export interface PropContext {
@@ -95,7 +98,9 @@ function buildDesk(ctx: PropContext): PropInstance {
     blotter.position.set((ctx.rng() - 0.5) * 0.5, 0.77, 0.05);
     g.add(blotter);
   }
-  return { group: g };
+  const hit = hitbox(1.6, 0.95, 0.9);
+  g.add(hit);
+  return { group: g, hit };
 }
 
 function buildChair(ctx: PropContext): PropInstance {
@@ -114,8 +119,11 @@ function buildChair(ctx: PropContext): PropInstance {
   }
   g.rotation.y = (ctx.rng() - 0.5) * 0.9;
   const inner = g;
+  const hit = hitbox(0.7, 1.0, 0.7);
+  g.add(hit);
   return {
     group: g,
+    hit,
     applyAlteration: (kind) => {
       // turned to face the door the player came through — discovered, never seen
       if (kind === 'chair-turned') inner.rotation.y += Math.PI;
@@ -145,7 +153,9 @@ function buildCabinet(): PropInstance {
     label.position.set(0, cy + 0.05, 0.259);
     g.add(front, handle, label);
   }
-  return { group: g };
+  const hit = hitbox(0.75, 1.5, 0.7);
+  g.add(hit);
+  return { group: g, hit };
 }
 
 function buildShelf(ctx: PropContext): PropInstance {
@@ -237,7 +247,9 @@ function buildShelf(ctx: PropContext): PropInstance {
       }
     }
   }
-  return { group: g };
+  const hit = hitbox(1.2, 2.1, 0.6);
+  g.add(hit);
+  return { group: g, hit };
 }
 
 function buildBench(): PropInstance {
@@ -250,7 +262,9 @@ function buildBench(): PropInstance {
   const r = new THREE.Mesh(legGeo, mat(0x38322a));
   r.position.set(0.7, 0.21, 0);
   g.add(seat, l, r);
-  return { group: g };
+  const hit = hitbox(1.7, 0.8, 0.7);
+  g.add(hit);
+  return { group: g, hit };
 }
 
 function buildCart(): PropInstance {
@@ -265,7 +279,9 @@ function buildCart(): PropInstance {
     w.position.set(x, 0.07, z);
     g.add(w);
   }
-  return { group: g };
+  const hit = hitbox(1.0, 0.9, 0.65);
+  g.add(hit);
+  return { group: g, hit };
 }
 
 // ------------------------------------------------------------ wall-mounted
@@ -450,6 +466,7 @@ function buildLightFixture(ctx: PropContext): PropInstance {
   if (lit && ctx.anchor.flicker) {
     const baseI = light!.intensity;
     update = (_dt, time) => {
+      if (inst.lit === false) return; // altered dark — stay dark
       // irregular fluorescent stutter — never a hard cut to black
       const n =
         Math.sin(time * 31.7) * Math.sin(time * 8.9 + 2.0) > 0.86
@@ -459,18 +476,20 @@ function buildLightFixture(ctx: PropContext): PropInstance {
       (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6 * n;
     };
   }
-  const hit = ctx.wrong ? hitbox(1.4, 0.8, 0.8, -0.2) : undefined;
-  if (hit) g.add(hit);
-  return {
+  const hit = hitbox(1.4, 0.8, 0.8, -0.2);
+  g.add(hit);
+  const inst: PropInstance = {
     group: g,
     hit,
     light,
     update,
+    lit,
     applyAlteration: (kind) => {
       if (kind === 'light-off') {
         if (light) light.intensity = 0;
         (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 0;
-        update = undefined;
+        inst.update = undefined;
+        inst.lit = false;
       }
       if (kind === 'light-on') {
         if (!light) {
@@ -480,9 +499,29 @@ function buildLightFixture(ctx: PropContext): PropInstance {
         }
         light.intensity = ctx.palette.lampIntensity;
         (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
+        inst.lit = true;
       }
     },
   };
+  return inst;
+}
+
+// ------------------------------------------------------------- wall paper
+
+function buildNotice(ctx: PropContext): PropInstance {
+  const g = new THREE.Group();
+  const lines = ctx.anchor.notice?.lines ?? ['NOTICE'];
+  const sheet = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.36, 0.45),
+    new THREE.MeshStandardMaterial({ map: noticeTexture(lines, ctx.seed), roughness: 0.95 }),
+  );
+  sheet.position.set(0, 1.55, 0.012);
+  sheet.rotation.z = 0.015;
+  g.add(sheet);
+  const hit = hitbox(0.55, 0.7, 0.45, 1.55);
+  hit.position.z = 0.2;
+  g.add(hit);
+  return { group: g, hit };
 }
 
 // ------------------------------------------------------------- desk things
@@ -780,6 +819,7 @@ export function buildProp(ctx: PropContext): PropInstance {
     case 'shelf': return buildShelf(ctx);
     case 'bench': return buildBench();
     case 'cart': return buildCart();
+    case 'notice': return buildNotice(ctx);
     case 'door': return buildDoor(ctx);
     case 'window': return buildWindow(ctx);
     case 'roomplate': return buildRoomPlate(ctx);

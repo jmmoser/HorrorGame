@@ -36,6 +36,8 @@ export type PropRole =
   | 'shelf'
   | 'bench'
   | 'cart'
+  // wall paper — readable, transcribable, never wrong
+  | 'notice'
   // wrongable anchors
   | 'door'
   | 'window'
@@ -66,6 +68,8 @@ export interface AnchorDef {
   wrongLabel?: string;
   /** spawn nothing unless a discrepancy selects this anchor (extra door etc.) */
   absentWhenNormal?: boolean;
+  /** for role 'notice': the printed lines and the transcription entry */
+  notice?: { lines: string[]; entry: string };
 }
 
 export type DiscrepancyType =
@@ -117,6 +121,9 @@ export interface FloorSpec {
   map: string;
   anchors: Record<string, AnchorDef>;
   pool: DiscrepancyDef[];
+  /** the filed schedule for this floor — the baseline the player can check
+   *  the building against. shown on arrival and in the ledger. */
+  schedule: string[];
   /** long-hallway support: rows of the map duplicated when active */
   stretch?: { row: number; count: number };
   /** ambience mix 0..1 */
@@ -126,12 +133,18 @@ export interface FloorSpec {
   ceilingHeight: number;
 }
 
+export type EntryKind = 'discrepancy' | 'mundane' | 'amend' | 'notice' | 'filed';
+
 export interface LedgerEntry {
   id: string;
   floor: number;
   /** in-game timestamp string, e.g. "−03 · 00:41:22" */
   stamp: string;
   text: string;
+  /** what sort of record this is; absent in old saves = 'discrepancy' */
+  kind?: EntryKind;
+  /** map anchor letter this entry was logged at, for blueprint marks */
+  anchor?: string;
   /** set true when the building rewrites it */
   altered?: boolean;
   originalText?: string;

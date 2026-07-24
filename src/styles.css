@@ -176,6 +176,57 @@ body {
   background: rgba(216, 210, 196, 0.85);
 }
 
+/* documenting ring: the pencil takes a moment */
+#doc-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  pointer-events: none;
+}
+
+#doc-ring-fill {
+  transition: stroke-dashoffset 0.08s linear;
+}
+
+/* floor arrival card: name + the filed schedule */
+#floor-card {
+  position: absolute;
+  top: calc(3.2rem + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 86vw;
+  text-align: center;
+  text-shadow: 0 1px 8px #000;
+  animation: card-in 2.4s ease both;
+  transition: opacity 1.6s ease;
+}
+
+#floor-card.leaving {
+  opacity: 0;
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+#floor-card-name {
+  font-size: 0.68rem;
+  letter-spacing: 0.28em;
+  color: rgba(216, 210, 196, 0.85);
+}
+
+#floor-card-sched {
+  margin-top: 0.45rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.18em;
+  line-height: 1.9;
+  color: rgba(216, 210, 196, 0.5);
+}
+
 #ledger-tab {
   position: absolute;
   bottom: 0;
@@ -258,6 +309,31 @@ body {
   padding-bottom: 0.5rem;
 }
 
+#ledger-case {
+  white-space: nowrap;
+}
+
+#ledger-schedule {
+  margin-top: 0.7rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed #a99f85;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.sched-head {
+  font-size: 0.55rem;
+  letter-spacing: 0.28em;
+  color: #6d6753;
+  margin-bottom: 0.3rem;
+}
+
+.sched-line {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  line-height: 1.8;
+  color: #45402f;
+}
+
 #blueprint {
   width: 100%;
   height: auto;
@@ -292,6 +368,37 @@ body {
 
 .entry.altered .entry-meta {
   color: #8a4a3a;
+}
+
+/* observations of no deviation: fainter ink, routine handwriting */
+.entry.entry-mundane {
+  color: #5c5646;
+}
+
+/* amendments: red ink in the margin */
+.entry.entry-amend {
+  color: var(--red-ink);
+  border-left: 2px solid rgba(122, 32, 32, 0.45);
+  padding-left: 0.5rem;
+}
+
+.entry.entry-amend .entry-meta {
+  color: #8a4a3a;
+}
+
+/* transcriptions from the building's own paper */
+.entry.entry-notice {
+  font-style: italic;
+}
+
+/* the ruled-off line closing out a floor */
+.entry-filed {
+  padding: 0.5rem 0.1rem;
+  border-bottom: 3px double #7e765f;
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  color: #55503f;
+  text-align: center;
 }
 
 .entry-empty {
