@@ -14,7 +14,9 @@ import {
   isWalkable,
   opposite,
   parseRows,
+  propObstacle,
   type Grid,
+  type ObstacleAABB,
 } from './grid';
 import { buildProp, type PropInstance } from './props';
 import { ceilingTexture, floorTexture, puffTexture, wallTexture } from './textures';
@@ -56,6 +58,8 @@ export interface BuiltFloor {
   ledgerDiscrepancy: SelectedDiscrepancy | null;
   elevator: ElevatorRig;
   props: Map<string, PropInstance>;
+  /** collision boxes for solid props */
+  obstacles: ObstacleAABB[];
   audioSpots: Array<{ kind: 'dialtone' | 'drip'; pos: THREE.Vector3 }>;
   litPositions: THREE.Vector3[];
   dispose: () => void;
@@ -291,6 +295,7 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const mundanes: MundaneTarget[] = [];
   const notices: NoticeTarget[] = [];
   const audioSpots: BuiltFloor['audioSpots'] = [];
+  const obstacles: ObstacleAABB[] = [];
   const litPositions: THREE.Vector3[] = [];
   const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink', 'notice']);
 
@@ -337,6 +342,8 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     prop.group.rotation.y = yaw;
     group.add(prop.group);
     props.set(letter, prop);
+    const obstacle = propObstacle(anchor.role, anchor.facing, cx, cz);
+    if (obstacle) obstacles.push(obstacle);
     if (prop.update) updatables.push(prop.update);
     if (prop.light) {
       const p = new THREE.Vector3();
@@ -410,6 +417,7 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     ledgerDiscrepancy,
     elevator,
     props,
+    obstacles,
     audioSpots,
     litPositions,
     dispose: () => {
@@ -426,51 +434,63 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   };
 }
 
-/** grid + elevator-door collision for the player capsule */
+/** push a circle at (px,pz) out of an AABB, or null if not overlapping */
+function pushOut(px: number, pz: number, r: number, b: ObstacleAABB): [number, number] | null {
+  const nx = Math.max(b.minX, Math.min(px, b.maxX));
+  const nz = Math.max(b.minZ, Math.min(pz, b.maxZ));
+  const dx = px - nx;
+  const dz = pz - nz;
+  const d2 = dx * dx + dz * dz;
+  if (d2 >= r * r) return null;
+  if (d2 > 1e-9) {
+    const d = Math.sqrt(d2);
+    return [nx + (dx / d) * r, nz + (dz / d) * r];
+  }
+  // circle center inside the box: exit along the smallest penetration axis
+  const west = px - b.minX;
+  const east = b.maxX - px;
+  const north = pz - b.minZ;
+  const south = b.maxZ - pz;
+  const m = Math.min(west, east, north, south);
+  if (m === west) return [b.minX - r, pz];
+  if (m === east) return [b.maxX + r, pz];
+  if (m === north) return [px, b.minZ - r];
+  return [px, b.maxZ + r];
+}
+
+/** grid + prop + elevator-door collision for the player capsule */
 export function makeCollider(built: BuiltFloor) {
-  const { grid, elevator } = built;
+  const { grid, elevator, obstacles } = built;
   const el = grid.elevator;
   return (x: number, z: number, r: number): { x: number; z: number } => {
     let px = x;
     let pz = z;
-    // resolve against wall cells around the player
-    const cx = Math.floor(px / CS);
-    const cz = Math.floor(pz / CS);
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const ch = charAt(grid.rows, cx + dx, cz + dz);
-        if (isWalkable(ch)) continue;
-        const minX = (cx + dx) * CS;
-        const maxX = minX + CS;
-        const minZ = (cz + dz) * CS;
-        const maxZ = minZ + CS;
-        const nx = Math.max(minX, Math.min(px, maxX));
-        const nz = Math.max(minZ, Math.min(pz, maxZ));
-        const ddx = px - nx;
-        const ddz = pz - nz;
-        const d2 = ddx * ddx + ddz * ddz;
-        if (d2 < r * r && d2 > 1e-9) {
-          const d = Math.sqrt(d2);
-          px = nx + (ddx / d) * r;
-          pz = nz + (ddz / d) * r;
-        } else if (d2 <= 1e-9) {
-          // player center inside the box: push out along smallest axis
-          px += r;
+    // two relaxation passes so a push out of a prop can't leave the capsule
+    // inside a wall (or vice versa) in tight corners
+    for (let pass = 0; pass < 2; pass++) {
+      // wall cells around the player
+      const cx = Math.floor(px / CS);
+      const cz = Math.floor(pz / CS);
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ch = charAt(grid.rows, cx + dx, cz + dz);
+          if (isWalkable(ch)) continue;
+          const minX = (cx + dx) * CS;
+          const minZ = (cz + dz) * CS;
+          const p = pushOut(px, pz, r, { minX, maxX: minX + CS, minZ, maxZ: minZ + CS });
+          if (p) [px, pz] = p;
         }
       }
-    }
-    // elevator doors
-    const b = elevator.blocker(el.doorX, el.doorZ, el.doorW);
-    if (b) {
-      const nx = Math.max(b.minX, Math.min(px, b.maxX));
-      const nz = Math.max(b.minZ, Math.min(pz, b.maxZ));
-      const ddx = px - nx;
-      const ddz = pz - nz;
-      const d2 = ddx * ddx + ddz * ddz;
-      if (d2 < r * r && d2 > 1e-9) {
-        const d = Math.sqrt(d2);
-        px = nx + (ddx / d) * r;
-        pz = nz + (ddz / d) * r;
+      // solid props
+      for (const ob of obstacles) {
+        const p = pushOut(px, pz, r, ob);
+        if (p) [px, pz] = p;
+      }
+      // elevator doors
+      const b = elevator.blocker(el.doorX, el.doorZ, el.doorW);
+      if (b) {
+        const p = pushOut(px, pz, r, b);
+        if (p) [px, pz] = p;
       }
     }
     return { x: px, z: pz };

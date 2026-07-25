@@ -1,4 +1,4 @@
-import type { Facing, FloorSpec } from '../core/types';
+import type { Facing, FloorSpec, PropRole } from '../core/types';
 
 // Floors are authored as ASCII maps. '#' wall, '.' floor, 'E' elevator car,
 // any letter = a walkable cell carrying a prop anchor. One cell = 2m.
@@ -129,6 +129,61 @@ export function buildGrid(rows: string[]): Grid {
   };
 }
 
+// ------------------------------------------------------------ prop obstacles
+
+export interface ObstacleAABB {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+// Solid props the player cannot walk through. Half-extents in prop-local
+// space (x across the prop, z front-to-back), sized to the built geometry
+// plus a small margin. Wall-mounted paper, lights, and floor decals are
+// deliberately absent — they have no body to bump into.
+const FOOTPRINTS: Partial<Record<PropRole, { hw: number; hd: number; cz?: number }>> = {
+  desk: { hw: 0.76, hd: 0.4 },
+  chair: { hw: 0.26, hd: 0.28 },
+  cabinet: { hw: 0.29, hd: 0.3 },
+  shelf: { hw: 0.51, hd: 0.21 },
+  bench: { hw: 0.81, hd: 0.25 },
+  cart: { hw: 0.42, hd: 0.25 },
+  plant: { hw: 0.2, hd: 0.2 },
+  coffee: { hw: 0.37, hd: 0.29 },
+  phone: { hw: 0.37, hd: 0.29 },
+  paper: { hw: 0.37, hd: 0.29 },
+  ashtray: { hw: 0.37, hd: 0.29 },
+  sink: { hw: 0.29, hd: 0.22, cz: 0.24 },
+};
+
+/** world-space collision box for a prop, or null if it doesn't block */
+export function propObstacle(
+  role: PropRole,
+  facing: Facing,
+  cellX: number,
+  cellZ: number,
+): ObstacleAABB | null {
+  const fp = FOOTPRINTS[role];
+  if (!fp) return null;
+  let { x, z } = cellCenter(cellX, cellZ);
+  if (role === 'sink') {
+    // wall-mounted: the group origin sits on the wall face (see buildFloor)
+    const back = DIRS[opposite(facing)];
+    x += back[0] * (CS / 2 - 0.01);
+    z += back[1] * (CS / 2 - 0.01);
+  }
+  // props are modeled facing +z; facing rotates local space in quarter turns
+  const [fx, fz] = DIRS[facing];
+  const off = fp.cz ?? 0;
+  x += fx * off;
+  z += fz * off;
+  const sideways = facing === 'e' || facing === 'w';
+  const hx = sideways ? fp.hd : fp.hw;
+  const hz = sideways ? fp.hw : fp.hd;
+  return { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz };
+}
+
 export function findAnchorCell(rows: string[], letter: string): [number, number] | null {
   for (let z = 0; z < rows.length; z++) {
     const x = rows[z].indexOf(letter);
@@ -244,6 +299,90 @@ export function validateSpec(spec: FloorSpec): string[] {
     for (const [ch] of seen) {
       const cell = findAnchorCell(rows, ch)!;
       if (!visited.has(cell.join(','))) errors.push(`anchor '${ch}' unreachable from elevator`);
+    }
+  } catch (e) {
+    errors.push(String(e));
+  }
+  // fine-grained reachability: solid props must never seal a corridor for the
+  // player capsule. BFS on a sub-cell lattice with wall + prop collision.
+  try {
+    const R = 0.32; // keep in sync with the player capsule radius
+    const obstacles: ObstacleAABB[] = [];
+    for (const [ch, def] of Object.entries(spec.anchors)) {
+      const cell = findAnchorCell(rows, ch);
+      if (!cell) continue;
+      const ob = propObstacle(def.role, def.facing, cell[0], cell[1]);
+      if (ob) obstacles.push(ob);
+    }
+    const STEP = CS / 10;
+    const gw = rows[0].length * 10;
+    const gh = rows.length * 10;
+    const passable = (x: number, z: number): boolean => {
+      for (const b of obstacles) {
+        const dx = x - Math.max(b.minX, Math.min(x, b.maxX));
+        const dz = z - Math.max(b.minZ, Math.min(z, b.maxZ));
+        if (dx * dx + dz * dz < R * R) return false;
+      }
+      const c0x = Math.floor((x - R) / CS);
+      const c1x = Math.floor((x + R) / CS);
+      const c0z = Math.floor((z - R) / CS);
+      const c1z = Math.floor((z + R) / CS);
+      for (let cz = c0z; cz <= c1z; cz++) {
+        for (let cx = c0x; cx <= c1x; cx++) {
+          if (isWalkable(charAt(rows, cx, cz))) continue;
+          const dx = x - Math.max(cx * CS, Math.min(x, cx * CS + CS));
+          const dz = z - Math.max(cz * CS, Math.min(z, cz * CS + CS));
+          if (dx * dx + dz * dz < R * R) return false;
+        }
+      }
+      return true;
+    };
+    const grid = buildGrid(rows);
+    const startX = Math.floor(grid.elevator.cx / STEP);
+    const startZ = Math.floor(grid.elevator.cz / STEP);
+    const visited = new Uint8Array(gw * gh);
+    const queue: number[] = [startZ * gw + startX];
+    visited[queue[0]] = 1;
+    while (queue.length) {
+      const n = queue.pop()!;
+      const nx = n % gw;
+      const nz = (n / gw) | 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const mx = nx + dx;
+        const mz = nz + dz;
+        if (mx < 0 || mx >= gw || mz < 0 || mz >= gh) continue;
+        const m = mz * gw + mx;
+        if (visited[m]) continue;
+        if (!passable((mx + 0.5) * STEP, (mz + 0.5) * STEP)) continue;
+        visited[m] = 1;
+        queue.push(m);
+      }
+    }
+    // every walkable cell must keep a reachable stand-point nearby, or the
+    // props have walled something off
+    const NEAR = 1.4;
+    for (let cz = 0; cz < rows.length; cz++) {
+      for (let cx = 0; cx < rows[0].length; cx++) {
+        if (!isWalkable(rows[cz][cx])) continue;
+        const c = cellCenter(cx, cz);
+        let ok = false;
+        const n0x = Math.max(0, Math.floor((c.x - NEAR) / STEP));
+        const n1x = Math.min(gw - 1, Math.floor((c.x + NEAR) / STEP));
+        const n0z = Math.max(0, Math.floor((c.z - NEAR) / STEP));
+        const n1z = Math.min(gh - 1, Math.floor((c.z + NEAR) / STEP));
+        for (let nz = n0z; nz <= n1z && !ok; nz++) {
+          for (let nx = n0x; nx <= n1x; nx++) {
+            if (!visited[nz * gw + nx]) continue;
+            const dx = (nx + 0.5) * STEP - c.x;
+            const dz = (nz + 0.5) * STEP - c.z;
+            if (dx * dx + dz * dz <= NEAR * NEAR) {
+              ok = true;
+              break;
+            }
+          }
+        }
+        if (!ok) errors.push(`cell ${cx},${cz} ('${rows[cz][cx]}') cut off by prop collision`);
+      }
     }
   } catch (e) {
     errors.push(String(e));
