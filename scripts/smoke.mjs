@@ -101,6 +101,38 @@ for (let floor = 1; floor <= 5; floor++) {
       if (!extras.kinds.includes(want)) errors.push(`floor 1: missing ${want} entry after debug drive`);
     }
     if (!(extras.attention > 0)) errors.push('floor 1: attention did not rise');
+
+    // collision: a solid prop has to stop the walk — position AND stride.
+    // walking on the spot against a desk kept the footsteps playing once.
+    const bump = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      const ob = d.built.obstacles[0];
+      // stand just short of the box and push straight into it
+      d.teleport((ob.minX + ob.maxX) / 2, ob.minZ - 0.6, 0);
+      d.player.frozen = false;
+      let steps = 0;
+      const prev = d.player.onStep;
+      d.player.onStep = () => steps++;
+      const from = { x: d.player.pos.x, z: d.player.pos.y };
+      const t0 = performance.now();
+      while (performance.now() - t0 < 1500) {
+        window.__game.controls.move.x = 0;
+        window.__game.controls.move.y = -1;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      window.__game.controls.move.x = 0;
+      window.__game.controls.move.y = 0;
+      d.player.onStep = prev;
+      const moved = Math.hypot(d.player.pos.x - from.x, d.player.pos.y - from.z);
+      return { moved, steps, speed: d.player.speed01 };
+    });
+    console.log(
+      `floor 1 collision: pushed into prop, moved=${bump.moved.toFixed(2)}m ` +
+        `steps=${bump.steps} speed=${bump.speed.toFixed(2)}`,
+    );
+    if (bump.moved > 0.7) errors.push('floor 1: player walked through a solid prop');
+    if (bump.speed > 0.15) errors.push('floor 1: player still "walking" while blocked by a prop');
+    if (bump.steps > 1) errors.push(`floor 1: ${bump.steps} footsteps while blocked by a prop`);
   }
 
   await page.evaluate(() => window.__game.debug.logAllTargets());

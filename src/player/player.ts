@@ -1,9 +1,10 @@
 import * as THREE from 'three';
+import { PLAYER_RADIUS } from '../world/grid';
 import type { Controls } from './controls';
 
 const WALK_SPEED = 3.1; // m/s. purposeful, but still an inspector, not a soldier.
 const EYE_HEIGHT = 1.62;
-const RADIUS = 0.32;
+const RADIUS = PLAYER_RADIUS;
 
 export type CollideFn = (x: number, z: number, r: number) => { x: number; z: number };
 
@@ -64,10 +65,25 @@ export class Player {
     this.vel.x += (tx - this.vel.x) * Math.min(1, accel * dt);
     this.vel.y += (tz - this.vel.y) * Math.min(1, accel * dt);
 
-    const nx = this.pos.x + this.vel.x * dt;
-    const nz = this.pos.y + this.vel.y * dt;
+    const fromX = this.pos.x;
+    const fromZ = this.pos.y;
+    const nx = fromX + this.vel.x * dt;
+    const nz = fromZ + this.vel.y * dt;
     const resolved = collide(nx, nz, RADIUS);
     this.pos.set(resolved.x, resolved.z);
+
+    // keep the velocity honest about what actually happened: leaning into a
+    // desk must stop the stride and the head-bob, not walk on the spot. a
+    // push-out can also move us further than we asked for — never let that
+    // read as speed.
+    if (dt > 1e-5) {
+      const want = Math.hypot(this.vel.x, this.vel.y);
+      const gx = (this.pos.x - fromX) / dt;
+      const gz = (this.pos.y - fromZ) / dt;
+      const got = Math.hypot(gx, gz);
+      const scale = got > want ? (got > 1e-6 ? want / got : 0) : 1;
+      this.vel.set(gx * scale, gz * scale);
+    }
 
     const speed = Math.hypot(this.vel.x, this.vel.y) / WALK_SPEED;
     // head bob — subtle, slower than the usual game trot

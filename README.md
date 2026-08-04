@@ -89,20 +89,25 @@ certainty that the building knows it is being documented.
 ```bash
 npm install
 npm run dev        # dev server
-npm run build      # typecheck + production build + PWA (dist/)
+npm run build      # floor validation + typecheck + production build + PWA (dist/)
 npm run preview    # serve the production build
 ```
 
 Verification:
 
 ```bash
-npx tsx scripts/validate-floors.ts   # authoring checks: enclosure, reachability,
-                                     # wall-mounts, anchors, pools, quotas
-node scripts/smoke.mjs               # headless end-to-end: plays all five floors,
-                                     # logs every discrepancy, rides the elevator,
-                                     # verifies the floor-5 ledger alteration and
-                                     # the ending; screenshots each floor
+npm run validate   # authoring checks: enclosure, reachability (including with
+                   # prop collision, on both the plain and stretched maps),
+                   # wall-mounts, anchors, pools, quotas
+npm run smoke      # headless end-to-end: plays all five floors, logs every
+                   # discrepancy, rides the elevator, checks prop collision
+                   # stops the walk, verifies the floor-5 ledger alteration
+                   # and the ending; screenshots each floor
 ```
+
+`npm run build` runs `validate` first, so CI (`.github/workflows/ci.yml`, on
+every PR and push to `main`) and the Pages deploy both gate on it. The smoke
+test needs a browser and is run by hand.
 
 (The smoke test uses the preinstalled Chromium at `/opt/pw-browsers/chromium`;
 software rendering is slow, so it takes a few minutes.)
