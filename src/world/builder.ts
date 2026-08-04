@@ -11,10 +11,12 @@ import {
   cellCenter,
   charAt,
   facingToYaw,
+  findAnchorCell,
   isWalkable,
   opposite,
   parseRows,
   propObstacle,
+  WALL_MOUNTED,
   type Grid,
   type ObstacleAABB,
 } from './grid';
@@ -297,20 +299,11 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const audioSpots: BuiltFloor['audioSpots'] = [];
   const obstacles: ObstacleAABB[] = [];
   const litPositions: THREE.Vector3[] = [];
-  const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink', 'notice']);
 
   for (const [letter, anchor] of Object.entries(spec.anchors)) {
-    let cx = -1;
-    let cz = -1;
-    for (let z = 0; z < grid.h; z++) {
-      const x = rows[z].indexOf(letter);
-      if (x >= 0) {
-        cx = x;
-        cz = z;
-        break;
-      }
-    }
-    if (cx < 0) continue;
+    const cell = findAnchorCell(rows, letter);
+    if (!cell) continue;
+    const [cx, cz] = cell;
     const sel = selectedByAnchor.get(letter);
     const wrong = sel !== undefined;
     if (anchor.absentWhenNormal && !wrong) continue;

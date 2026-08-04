@@ -10,7 +10,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run validate && tsc --noEmit && vite build",
+    "validate": "tsx scripts/validate-floors.ts",
+    "smoke": "node scripts/smoke.mjs",
     "preview": "vite preview",
     "icons": "node scripts/gen-icons.mjs"
   },

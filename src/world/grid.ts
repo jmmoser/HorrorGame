@@ -5,6 +5,8 @@ import type { Facing, FloorSpec, PropRole } from '../core/types';
 
 export const CS = 2;
 export const WALL_H = 2.7;
+/** radius of the player capsule — collision, and the validator's clearance test */
+export const PLAYER_RADIUS = 0.32;
 
 export interface Grid {
   w: number;
@@ -131,6 +133,18 @@ export function buildGrid(rows: string[]): Grid {
 
 // ------------------------------------------------------------ prop obstacles
 
+/** roles whose group origin sits on the wall face behind the cell, not the
+ *  cell center. buildFloor places them; propObstacle has to match. */
+export const WALL_MOUNTED: ReadonlySet<PropRole> = new Set<PropRole>([
+  'door',
+  'window',
+  'roomplate',
+  'clock',
+  'calendar',
+  'sink',
+  'notice',
+]);
+
 export interface ObstacleAABB {
   minX: number;
   maxX: number;
@@ -167,8 +181,8 @@ export function propObstacle(
   const fp = FOOTPRINTS[role];
   if (!fp) return null;
   let { x, z } = cellCenter(cellX, cellZ);
-  if (role === 'sink') {
-    // wall-mounted: the group origin sits on the wall face (see buildFloor)
+  if (WALL_MOUNTED.has(role)) {
+    // the group origin sits on the wall face, not the cell center (see buildFloor)
     const back = DIRS[opposite(facing)];
     x += back[0] * (CS / 2 - 0.01);
     z += back[1] * (CS / 2 - 0.01);
@@ -191,8 +205,6 @@ export function findAnchorCell(rows: string[], letter: string): [number, number]
   }
   return null;
 }
-
-const WALL_MOUNTED = new Set(['door', 'window', 'roomplate', 'clock', 'calendar', 'sink', 'notice']);
 
 /** Author-time sanity checks. Run in dev and by scripts/validate-floors. */
 export function validateSpec(spec: FloorSpec): string[] {
@@ -303,10 +315,30 @@ export function validateSpec(spec: FloorSpec): string[] {
   } catch (e) {
     errors.push(String(e));
   }
-  // fine-grained reachability: solid props must never seal a corridor for the
-  // player capsule. BFS on a sub-cell lattice with wall + prop collision.
+  // the long-hallway discrepancy rebuilds the map with the stretch row
+  // repeated, so both variants are floors the player can actually walk
+  errors.push(...checkPropClearance(spec, rows));
+  if (spec.stretch) {
+    const stretched = applyStretch(rows, spec.stretch);
+    errors.push(
+      ...checkPropClearance(spec, stretched).map((e) => `${e} (stretched)`),
+    );
+  }
+  // stretch row must exist and stay enclosed
+  if (spec.stretch) {
+    const r = rows[spec.stretch.row];
+    if (!r) errors.push(`stretch row ${spec.stretch.row} out of range`);
+    else if (r[0] !== '#' || r[w - 1] !== '#') errors.push('stretch row not wall-bounded');
+  }
+  return errors;
+}
+
+/** Fine-grained reachability: solid props must never seal a corridor for the
+ *  player capsule. BFS on a sub-cell lattice with wall + prop collision. */
+function checkPropClearance(spec: FloorSpec, rows: string[]): string[] {
+  const errors: string[] = [];
   try {
-    const R = 0.32; // keep in sync with the player capsule radius
+    const R = PLAYER_RADIUS;
     const obstacles: ObstacleAABB[] = [];
     for (const [ch, def] of Object.entries(spec.anchors)) {
       const cell = findAnchorCell(rows, ch);
@@ -386,12 +418,6 @@ export function validateSpec(spec: FloorSpec): string[] {
     }
   } catch (e) {
     errors.push(String(e));
-  }
-  // stretch row must exist and stay enclosed
-  if (spec.stretch) {
-    const r = rows[spec.stretch.row];
-    if (!r) errors.push(`stretch row ${spec.stretch.row} out of range`);
-    else if (r[0] !== '#' || r[w - 1] !== '#') errors.push('stretch row not wall-bounded');
   }
   return errors;
 }
