@@ -554,8 +554,29 @@ body {
 .settings-control {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.3rem;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+/* On a phone the five quality options do not fit beside their own label, so
+   the row becomes two lines rather than letting the buttons sit on the text. */
+@media (max-width: 32rem) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.45rem;
+  }
+
+  .settings-control {
+    width: 100%;
+  }
+
+  .settings-range {
+    flex: 1 1 auto;
+    width: auto;
+  }
 }
 
 .settings-opt {

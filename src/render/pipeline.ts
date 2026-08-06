@@ -56,7 +56,21 @@ export interface Grade {
 }
 
 const VOL_MAX_LIGHTS = 6;
-const HALF = THREE.HalfFloatType;
+
+/**
+ * Rendering to a half-float target is an *extension* in WebGL2, not core. On a
+ * device without it every offscreen buffer would be framebuffer-incomplete and
+ * the game would be a black screen, so check once and fall back to 8-bit.
+ * The cost of the fallback is headroom: the scene buffer clips at 1.0, so the
+ * bloom threshold has to come down under it to catch a lit fixture at all.
+ */
+function hdrSupported(renderer: THREE.WebGLRenderer): boolean {
+  const gl = renderer.getContext();
+  return (
+    gl.getExtension('EXT_color_buffer_float') !== null ||
+    gl.getExtension('EXT_color_buffer_half_float') !== null
+  );
+}
 
 function fsMaterial(fragmentShader: string, uniforms: Record<string, THREE.IUniform>, defines: Record<string, string | number> = {}) {
   return new THREE.ShaderMaterial({
@@ -113,6 +127,10 @@ export class Pipeline {
   private shadowSpot: THREE.SpotLight | null = null;
   private ceilingHeight = 2.7;
 
+  /** half-float where the device allows it, 8-bit where it does not */
+  private bufferType: THREE.TextureDataType = THREE.HalfFloatType;
+  private hdr = true;
+
   adaptive = true;
   filmEffects = true;
   /** dev only: blit an intermediate buffer instead of the composite */
@@ -137,9 +155,33 @@ export class Pipeline {
     this.quad.frustumCulled = false;
     this.quadScene.add(this.quad);
 
+    this.hdr = hdrSupported(renderer);
+    this.bufferType = this.hdr ? THREE.HalfFloatType : THREE.UnsignedByteType;
     this.applyRendererSettings();
     this.buildTargets(1, 1);
     this.buildMaterials();
+  }
+
+  /** true when the scene buffer can hold values above 1.0 */
+  get hdrBuffers(): boolean {
+    return this.hdr;
+  }
+
+  /**
+   * The context can go away on a backgrounded tab or a driver reset. three
+   * re-uploads textures and geometry by itself; render targets it does not.
+   * Rebuild every buffer and material against the new context.
+   */
+  rebuildAfterContextLoss() {
+    this.hdr = hdrSupported(this.renderer);
+    this.bufferType = this.hdr ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    this.disposeTargets();
+    this.disposeMaterials();
+    this.applyRendererSettings();
+    this.buildTargets(this.width, this.height);
+    this.buildMaterials();
+    this.setSize(this.width, this.height, this.pixelRatio);
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   // ------------------------------------------------------------------ setup
@@ -177,7 +219,7 @@ export class Pipeline {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)), {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
-      type: HALF,
+      type: this.bufferType,
       depthBuffer: false,
       stencilBuffer: false,
       ...opts,
@@ -199,7 +241,7 @@ export class Pipeline {
     this.sceneRT = new THREE.WebGLRenderTarget(bw, bh, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
-      type: HALF,
+      type: this.bufferType,
       depthBuffer: true,
       stencilBuffer: false,
       depthTexture: depth,
@@ -296,8 +338,9 @@ export class Pipeline {
 
     this.matPrefilter = fsMaterial(BLOOM_PREFILTER_FRAG, {
       tDiffuse: { value: null },
-      threshold: { value: 1.0 },
-      knee: { value: 0.55 },
+      // an 8-bit scene buffer clips at white, so the knee has to sit under it
+      threshold: { value: this.hdr ? 1.0 : 0.72 },
+      knee: { value: this.hdr ? 0.55 : 0.2 },
     });
 
     this.matDown = fsMaterial(BLOOM_DOWN_FRAG, {

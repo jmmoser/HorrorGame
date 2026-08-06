@@ -199,6 +199,14 @@ governor gives back pixels before it gives back frames: it moves at most once a
 second, in five coarse steps, with a wide dead band so it settles instead of
 hunting.
 
+**Two failure modes are handled rather than assumed away.** Rendering to a
+half-float target is an *extension* in WebGL2, not core — without it every
+offscreen buffer is framebuffer-incomplete and the game is a black screen, so
+the pipeline checks once and falls back to 8-bit buffers (the cost is
+headroom: the bloom threshold drops under the clip point). And a backgrounded
+PWA can lose its GL context entirely; the canvas listens for it, and on restore
+rebuilds every render target and material and reloads the floor from the save.
+
 **Floors are ASCII maps.** `#` wall, `.` floor, `E` elevator, letters are
 prop anchors. A validation pass (also run in dev builds) checks enclosure,
 reachability from the elevator, and that wall-mounted props have walls.

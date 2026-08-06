@@ -110,6 +110,7 @@ export class Game {
   private insideCarSince = 0;
   private endingTimer = 0;
   private lastSaveWrite = 0;
+  private contextLost = false;
   private fader = document.getElementById('fader')!;
 
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
@@ -181,6 +182,25 @@ export class Game {
       if (document.hidden) this.persist();
     });
     window.addEventListener('pagehide', () => this.persist());
+
+    // A backgrounded PWA or a driver reset can take the GL context away.
+    // Without preventDefault the browser never offers it back, and without a
+    // rebuild the inspector comes back to a black corridor.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      this.persist();
+      this.setFade(true, true);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.pipeline.rebuildAfterContextLoss();
+      setTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
+      this.resize();
+      // three re-uploads textures and geometry itself, but the floor's canvas
+      // sources and shadow maps are cleanest to rebuild from the save
+      if (this.state !== 'ending') this.loadFloor(this.save.floor);
+    });
   }
 
   private resize() {
@@ -238,7 +258,8 @@ export class Game {
     const loop = (last: number) => {
       requestAnimationFrame((now) => {
         const dt = Math.min(0.05, (now - last) / 1000);
-        this.update(dt);
+        // nothing to draw into, and every GL call would throw
+        if (!this.contextLost) this.update(dt);
         loop(now);
       });
     };
