@@ -15,6 +15,8 @@ export class Hud {
   private floorCardSched = document.getElementById('floor-card-sched')!;
   private floorCardTimer: number | null = null;
   private fps = document.getElementById('fps-readout')!;
+  private caption = document.getElementById('caption-line')!;
+  private captionTimer: number | null = null;
   private fpsVisible = false;
   private fpsAccum = 0;
   private static DOC_CIRC = 75.4;
@@ -85,6 +87,18 @@ export class Hud {
     void this.toast.offsetWidth;
     this.toast.style.animation = '';
     this.toastTimer = window.setTimeout(() => this.toast.classList.add('hidden'), 3600);
+  }
+
+  /** name a sound the player just heard; only ever called when captions are on */
+  showCaption(text: string) {
+    this.caption.textContent = text;
+    this.caption.classList.remove('hidden');
+    this.caption.style.opacity = '1';
+    if (this.captionTimer) clearTimeout(this.captionTimer);
+    this.captionTimer = window.setTimeout(() => {
+      this.caption.style.opacity = '0';
+      this.captionTimer = window.setTimeout(() => this.caption.classList.add('hidden'), 600);
+    }, 4200);
   }
 
   setFpsVisible(on: boolean) {

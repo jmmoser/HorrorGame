@@ -16,10 +16,10 @@ export const GRADES: Record<PaletteName, Grade> = {
   // Office fluorescents: clean, clinical, a little sick. Tight beams — the air
   // up here is the least disturbed in the building.
   'fluorescent-green': {
-    exposure: 1.3,
+    exposure: 1.45,
     lift: rgb(0.010, 0.016, 0.012),
     gain: rgb(0.98, 1.0, 0.96),
-    gamma: 1.12,
+    gamma: 1.05,
     saturation: 0.8,
     shadowTint: rgb(0.86, 0.98, 0.9),
     highlightTint: rgb(1.0, 1.0, 0.96),
@@ -30,10 +30,10 @@ export const GRADES: Record<PaletteName, Grade> = {
   // Sodium corridor: the warmest floor, and the dustiest-looking. Beams read
   // almost solid.
   'sodium-orange': {
-    exposure: 1.34,
+    exposure: 1.46,
     lift: rgb(0.016, 0.010, 0.006),
     gain: rgb(1.0, 0.95, 0.86),
-    gamma: 1.1,
+    gamma: 1.04,
     saturation: 0.84,
     shadowTint: rgb(0.95, 0.86, 0.74),
     highlightTint: rgb(1.0, 0.94, 0.82),
@@ -44,10 +44,10 @@ export const GRADES: Record<PaletteName, Grade> = {
   // Moonlight open plan: the coldest, cleanest air. Long sightlines, so the
   // beams stay thin and the blacks stay blue rather than black.
   'moonlight-blue': {
-    exposure: 1.36,
+    exposure: 1.5,
     lift: rgb(0.008, 0.012, 0.022),
     gain: rgb(0.94, 0.97, 1.0),
-    gamma: 1.14,
+    gamma: 1.06,
     saturation: 0.74,
     shadowTint: rgb(0.78, 0.88, 1.0),
     highlightTint: rgb(0.96, 0.98, 1.0),
@@ -58,10 +58,10 @@ export const GRADES: Record<PaletteName, Grade> = {
   // Archive stacks: thirty years of paper dust, tungsten, and no ventilation.
   // The heaviest air in the building.
   'tungsten-dust': {
-    exposure: 1.3,
+    exposure: 1.42,
     lift: rgb(0.016, 0.012, 0.008),
     gain: rgb(1.0, 0.94, 0.84),
-    gamma: 1.08,
+    gamma: 1.03,
     saturation: 0.8,
     shadowTint: rgb(0.94, 0.86, 0.72),
     highlightTint: rgb(1.0, 0.95, 0.85),
@@ -72,10 +72,10 @@ export const GRADES: Record<PaletteName, Grade> = {
   // The lower lobby: almost no light left to grade. Blacks are crushed, the
   // little that survives is neutral, and the flashlight is the whole picture.
   'terminal-white': {
-    exposure: 1.4,
+    exposure: 1.52,
     lift: rgb(0.006, 0.006, 0.008),
     gain: rgb(0.96, 0.97, 1.0),
-    gamma: 1.16,
+    gamma: 1.08,
     saturation: 0.6,
     shadowTint: rgb(0.88, 0.9, 0.95),
     highlightTint: rgb(1.0, 1.0, 1.0),

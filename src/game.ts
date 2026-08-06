@@ -25,6 +25,7 @@ import { assignShadowCasters, gatherVolumetricLights } from './render/lighting';
 import { loadSettings, resolveProfile, saveSettings, type QualityProfile, type Settings } from './render/quality';
 import { Hud } from './ui/hud';
 import { LedgerUI } from './ui/ledger';
+import { SettingsUI } from './ui/settings';
 import { shareCard } from './ui/share';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
@@ -73,6 +74,7 @@ export class Game {
   private haptics = new Haptics();
   private hud = new Hud();
   private ledgerUI = new LedgerUI();
+  private settingsUI = new SettingsUI();
   private ambient = new THREE.AmbientLight(0xffffff, 0.5);
   private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.74, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
@@ -158,6 +160,17 @@ export class Game {
       await shareCard(this.save.floor, entry, caseNumber(this.save.seed));
     };
     this.ledgerUI.onAlteredTap = () => this.logLedgerDiscrepancy();
+
+    this.audio.onCaption = (text) => this.hud.showCaption(text);
+    this.settingsUI.onChange = (s) => this.applySettings(s);
+    this.settingsUI.onClose = () => this.toggleSettings();
+    document.getElementById('settings-btn')!.addEventListener('click', () => this.toggleSettings());
+    window.addEventListener('keydown', (e) => {
+      // Escape is the pause key everywhere; it also backs out of the ledger
+      if (e.key !== 'Escape') return;
+      if (this.ledgerUI.isOpen) this.toggleLedger();
+      else this.toggleSettings();
+    });
 
     window.addEventListener('visibilitychange', () => {
       if (document.hidden) this.persist();
@@ -555,11 +568,21 @@ export class Game {
     this.audio.setAttention(Math.min(1, this.attention));
   }
 
+  /** the inspector walks only while playing, with nothing open over the world */
+  private canMove(): boolean {
+    return (
+      this.state === 'play' &&
+      !this.ledgerUI.isOpen &&
+      !this.settingsUI.isOpen &&
+      this.documenting === null
+    );
+  }
+
   private cancelDocumenting() {
     if (!this.documenting) return;
     this.documenting = null;
     this.hud.setDocProgress(null);
-    if (this.state === 'play' && !this.ledgerUI.isOpen) this.player.frozen = false;
+    this.player.frozen = !this.canMove();
   }
 
   private commitDocumenting(hit: InteractHit) {
@@ -780,10 +803,25 @@ export class Game {
 
   // ---------------------------------------------------------------- ledger
 
+  private toggleSettings() {
+    if (this.settingsUI.isOpen) {
+      this.settingsUI.close();
+      this.controls.enabled = true;
+      this.player.frozen = !this.canMove();
+    } else if (this.state === 'play' || this.state === 'arriving') {
+      this.cancelDocumenting();
+      if (this.ledgerUI.isOpen) this.ledgerUI.close();
+      this.settingsUI.open(this.settings);
+      // the pointer belongs to the form while the form is open
+      this.controls.enabled = false;
+      this.player.frozen = true;
+    }
+  }
+
   private toggleLedger() {
     if (this.ledgerUI.isOpen) {
       this.ledgerUI.close();
-      this.player.frozen = this.state !== 'play';
+      this.player.frozen = !this.canMove();
     } else if (this.state === 'play' || this.state === 'arriving') {
       this.openLedger();
     }
@@ -825,11 +863,11 @@ export class Game {
     if (this.state === 'arriving') {
       if (this.stateT > 1.6) {
         this.state = 'play';
-        this.player.frozen = this.ledgerUI.isOpen;
+        this.player.frozen = !this.canMove();
       }
     } else if (this.state === 'play') {
       this.save.elapsed += dt;
-      if (!this.ledgerUI.isOpen && !this.documenting) this.player.frozen = false;
+      this.player.frozen = !this.canMove();
 
       // the act of documentation: hold the frame until the pencil moves
       if (this.documenting) {
@@ -840,7 +878,7 @@ export class Game {
           this.documenting = null;
           this.hud.setDocProgress(null);
           this.commitDocumenting(hit);
-          if (!this.ledgerUI.isOpen) this.player.frozen = false;
+          this.player.frozen = !this.canMove();
         }
       }
 
@@ -915,7 +953,7 @@ export class Game {
     for (const u of built.updatables) u(dt, this.time);
 
     // reticle
-    if (this.state === 'play' && !this.ledgerUI.isOpen) {
+    if (this.state === 'play' && !this.ledgerUI.isOpen && !this.settingsUI.isOpen) {
       this.hud.setOnTarget(this.raycastInteract() !== null);
     } else {
       this.hud.setOnTarget(false);
@@ -945,6 +983,14 @@ export class Game {
     // audio
     const playerV = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
     this.audio.updateListener(this.camera, playerV);
+    // stepping into the car swaps the floor's tail for a small metal box; a
+    // closed door seals it. The crossfade is what sells the elevator as a room.
+    const carness = this.playerInsideCar()
+      ? built.elevator.doorsClosed
+        ? 1
+        : 0.6
+      : Math.max(0, 1 - (this.distToCar() - 1.2) / 2.2);
+    this.audio.setEnclosure(carness);
     if (this.state === 'play') {
       this.audio.tick(playerV, () => {
         // an interested building lets its sounds come closer

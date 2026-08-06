@@ -140,9 +140,9 @@ export const AO_BLUR_FRAG = /* glsl */ `
     for (int i = -3; i <= 3; i++) {
       float fi = float(i);
       vec2 uv = vUv + texel * fi;
-      float w = exp(-fi * fi * 0.18);
+      float w = exp(-fi * fi * 0.12);
       float z = viewPosAt(uv).z;
-      w *= exp(-abs(z - centerZ) * 4.0);
+      w *= exp(-abs(z - centerZ) * 2.2);
       sum += texture(tAO, uv).r * w;
       wsum += w;
     }

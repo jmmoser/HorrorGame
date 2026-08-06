@@ -82,7 +82,7 @@ const PROFILES: Record<QualityTier, QualityProfile> = {
     shadowCasters: 3,
     ao: true,
     aoSamples: 12,
-    aoScale: 0.5,
+    aoScale: 1,
     volumetrics: true,
     volSteps: 20,
     volScale: 0.5,

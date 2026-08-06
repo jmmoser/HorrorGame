@@ -334,7 +334,7 @@ export class Pipeline {
         tVolume: { value: null },
         tBloom: { value: null },
         tBlur: { value: null },
-        aoStrength: { value: 0.92 },
+        aoStrength: { value: 0.82 },
         volumeStrength: { value: 1.0 },
         bloomStrength: { value: 0.55 },
         exposure: { value: 1.5 },

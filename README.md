@@ -6,8 +6,8 @@ The building has been empty for thirty years. It does not behave empty.
 
 **The elevator only goes down.**
 
-![Floor −01](docs/screenshots/floor-1.png)
-![Floor −02](docs/screenshots/floor-2.png)
+![Floor −03, moonlight-blue open plan](docs/screenshots/floor-3.png)
+![Floor −04, tungsten archive stacks](docs/screenshots/floor-4.png)
 
 No monsters. No chases. No jump scares. No death. The horror is a slow,
 compounding wrongness in beautiful, still, empty spaces — and the growing
@@ -75,14 +75,24 @@ certainty that the building knows it is being documented.
   always sourced somewhere you cannot see, and they stop if you approach.
   Every sound is generated in WebAudio; there are no audio files. Headphones
   screen at start. No music. No stingers.
+- **The building answers sounds.** A generated impulse response per floor puts
+  every world sound in its own architecture: partitioned offices are dead, the
+  residential corridor flutters between two parallel walls, the archive stacks
+  are smothered by thirty years of paper, and the lower lobby has a three-second
+  tail. Stepping into the elevator crossfades to a small metal box.
 - **Haptics** (Android) — a faint heartbeat that very slowly quickens with
   depth and occasionally desynchronizes.
 - **PWA** — installable, service-worker cached, fully offline after first
   load. The entire game is code; there are no fetched assets.
+- **Settings, filed as Form 7-B** — quality (auto/low/medium/high/ultra), a
+  steady-frame governor, film effects, look speed, invert, field of view,
+  volume, head-movement and haptics toggles for comfort, and sound captions
+  that name what the building just did and how far away it was.
 - **Depth persistence** — auto-save on every floor and continuously during
   play (localStorage), instant resume, depth counter always on screen.
 
 ![The ledger, altered](docs/screenshots/ledger-5.png)
+![Settings, filed as Form 7-B](docs/screenshots/settings.png)
 
 ## Running it
 
@@ -103,6 +113,10 @@ npm run smoke      # headless end-to-end: plays all five floors, logs every
                    # discrepancy, rides the elevator, checks prop collision
                    # stops the walk, verifies the floor-5 ledger alteration
                    # and the ending; screenshots each floor
+npm run shots      # fixed-seed contact sheet for renderer work: three vantages
+                   # per floor (elevator mouth, longest sightline, densest
+                   # props). --quality <tier>, --floors 1,2, --views ao,vol
+                   # to dump the intermediate buffers instead
 ```
 
 `npm run build` runs `validate` first, so CI (`.github/workflows/ci.yml`, on
@@ -121,19 +135,67 @@ src/
     specs.ts   the five floors: ASCII maps + anchors + discrepancy pools
     grid.ts    map parsing, collision queries, authoring validation,
                the long-hallway stretch mutation
-    builder.ts merged wall geometry, elevator rig (sliding doors, call
-               button), prop placement, dust motes
+    builder.ts merged wall geometry, world-projected wall UVs, elevator rig
+               (sliding doors, call button), prop placement, dust motes
     props.ts   every object, each with a normal and a wrong variant
-    textures.ts all surfaces + signage as generated canvas textures
+    textures.ts all surfaces + signage as generated canvas textures, with
+               normal + roughness maps derived from a blurred height field
     discrepancies.ts  the wrongness pass: seeded selection + rare variants
     mundane.ts "no deviation" entries for correct props + amendment text
     palette.ts one controlled palette per floor
   player/      controls (touch / desktop / gyro), movement + collision
-  audio/       synthesized WebAudio engine + haptics
-  render/      film grain / vignette / chromatic aberration pass
-  ui/          HUD (depth, reticle, ledger tab), ledger + blueprint, share card
+  audio/       synthesized WebAudio engine, per-floor convolution reverb,
+               haptics
+  render/
+    pipeline.ts the frame: scene → AO → volumetrics → bloom → DOF → composite
+    shaders.ts  the GLSL for all of the above (GLSL ES 3.00)
+    lighting.ts shadow-caster budget + which lights the dust catches
+    grades.ts   one colour grade per floor palette
+    quality.ts  tiers, device detection, persisted player settings
+  ui/          HUD (depth, reticle, ledger tab, captions), ledger + blueprint,
+               settings form, share card
   game.ts      state machine: arrive → document → descend; silent alterations
 ```
+
+**The frame.** The scene renders to an offscreen linear-HDR target with MSAA
+and a depth texture. Everything after that reads only depth, so no pass needs a
+second draw of the geometry:
+
+```
+scene ──▶ sceneRT (RGBA16F, MSAA, + depth)
+           ├─▶ SSAO         hemisphere samples, per-pixel spiral rotation,
+           │                depth-aware bilateral blur
+           ├─▶ volumetrics  single-scattering march; the flashlight is light 0
+           │                and the only one sampled against a shadow map
+           ├─▶ bloom        mip pyramid, soft-knee prefilter, tent upsample
+           ├─▶ DOF          quarter-res plate, only while a frame is held
+           └─▶ composite    ACES → per-floor grade → lens → canvas
+```
+
+Two things about that are worth knowing before editing it. The post materials
+are **GLSL ES 3.00**: three does not supply a `gl_FragColor` compatibility
+define, so each fragment shader declares its own output — and the volumetric
+pass needs 3.00 regardless, because three's shadow maps are *comparison*
+textures and binding one to a plain `sampler2D` makes the driver silently
+discard the whole draw call. And the scattering phase function is fed the angle
+between the incident and outgoing directions, which for a head-mounted
+flashlight is ~180°: the beam correctly backscatters almost nothing into its own
+lens. Shafts come from lights you are looking *toward*.
+
+**Lighting budget.** Ceiling fixtures are spotlights, not point lights: a
+downward cone is what a troffer throws, and it costs one shadow map instead of
+six. Which fixtures cast is decided once per floor by farthest-point sampling,
+and never changes while the player is on it — toggling `castShadow` on a live
+light recompiles every material on the floor, and a hitch in a game with no
+jump scares reads as a jump scare. For the same reason every fixture carries
+its light from the start, dark ones at zero intensity, so the building
+switching one on is not a hitch either.
+
+**Quality tiers.** `low` / `medium` / `high` / `ultra`, auto-detected from the
+GPU renderer string and device class, overridable in settings. A resolution
+governor gives back pixels before it gives back frames: it moves at most once a
+second, in five coarse steps, with a wide dead band so it settles instead of
+hunting.
 
 **Floors are ASCII maps.** `#` wall, `.` floor, `E` elevator, letters are
 prop anchors. A validation pass (also run in dev builds) checks enclosure,
@@ -154,15 +216,20 @@ frustum and more than ~5.5m away for 1.6 seconds. Never on screen.
 
 ## Slice decisions (and the path past them)
 
-- **WebGL2 only for the slice.** The brief calls for WebGPU-where-available;
-  three's WebGPU renderer requires node materials and a different post
-  pipeline, which is risk the slice doesn't need. The renderer is isolated
-  behind `game.ts` + `render/post.ts` for a later swap.
+- **WebGL2 only.** The brief calls for WebGPU-where-available; three's WebGPU
+  renderer requires node materials and a different post pipeline, which is risk
+  this doesn't need. The renderer is isolated behind `game.ts` +
+  `render/pipeline.ts` for a later swap.
+- **Screen-space occlusion, not baked.** Real-time SSAO from the depth buffer
+  costs a pass but keeps floors procedural and seed-stable. Baked lightmaps
+  would look better and would mean shipping per-floor assets, which is the one
+  thing the offline-first build is built to avoid.
 - **Procedural geometry + canvas textures instead of GLTF/KTX2.** Keeps the
-  installable PWA tiny (~160 KB gzipped, zero asset requests, trivially
-  offline) and every visual seed-stable. The prop factory is the seam where
-  baked-lightmap GLTF floors can replace generated rooms later; the KTX2
-  pipeline belongs to that step.
+  installable PWA tiny (~180 KB gzipped, zero asset requests, trivially
+  offline) and every visual seed-stable. Surfaces get their normal and
+  roughness maps generated at load from the same height field that draws the
+  albedo. The prop factory is the seam where baked-lightmap GLTF floors can
+  replace generated rooms later; the KTX2 pipeline belongs to that step.
 - **No leaderboard backend, no accounts, no monetization** — per the brief.
   Depth is local. The share card is the growth loop.
 
