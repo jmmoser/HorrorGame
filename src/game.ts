@@ -19,7 +19,10 @@ import { Controls } from './player/controls';
 import { Player } from './player/player';
 import { AudioEngine } from './audio/audio';
 import { Haptics } from './audio/haptics';
-import { PostFX } from './render/post';
+import { Pipeline } from './render/pipeline';
+import { GRADES } from './render/grades';
+import { assignShadowCasters, gatherVolumetricLights } from './render/lighting';
+import { loadSettings, resolveProfile, saveSettings, type QualityProfile, type Settings } from './render/quality';
 import { Hud } from './ui/hud';
 import { LedgerUI } from './ui/ledger';
 import { shareCard } from './ui/share';
@@ -64,7 +67,7 @@ export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
-  private post: PostFX;
+  private pipeline: Pipeline;
   private controls: Controls;
   private player: Player;
   private haptics = new Haptics();
@@ -74,6 +77,8 @@ export class Game {
   private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.74, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
   private flashBase = 40;
+  private settings: Settings;
+  private profile: QualityProfile;
 
   private save: SaveData;
   private built: BuiltFloor | null = null;
@@ -86,6 +91,8 @@ export class Game {
   /** the act of documentation: aim, hold the frame, then the pencil */
   private documenting: { hit: InteractHit; t: number } | null = null;
   private baseFov: number;
+  /** eased 0..1 — how far into the held frame the shallow focus has gone */
+  private docFocus = 0;
   /** per-floor: how much the building has noticed the documentation */
   private attention = 0;
   private attnCrossed = 0;
@@ -104,19 +111,23 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
     this.save = save;
+    this.settings = loadSettings();
+    this.profile = resolveProfile(this.settings);
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      // AA is the scene buffer's job now (MSAA where the tier affords it)
+      antialias: false,
       powerPreference: 'high-performance',
     });
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.5;
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);
     this.baseFov = this.camera.fov;
     this.player = new Player(this.camera, this.controls);
-    this.post = new PostFX(this.renderer, this.scene, this.camera);
+    this.pipeline = new Pipeline(this.renderer, this.scene, this.camera, this.profile);
+    this.pipeline.adaptive = this.settings.adaptiveResolution;
+    this.pipeline.setFilmEffects(this.settings.filmEffects);
+    this.applyPlayerSettings();
     this.resize();
     window.addEventListener('resize', () => this.resize());
 
@@ -124,6 +135,14 @@ export class Game {
     this.scene.add(this.flashlight);
     this.scene.add(this.flashTarget);
     this.flashlight.target = this.flashTarget;
+    // the beam the player aims is the one whose shadow they will notice
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(this.profile.shadowMapSize, this.profile.shadowMapSize);
+    this.flashlight.shadow.camera.near = 0.2;
+    this.flashlight.shadow.camera.far = 22;
+    this.flashlight.shadow.bias = -0.0012;
+    this.flashlight.shadow.normalBias = 0.03;
+    this.pipeline.setShadowSource(this.flashlight);
 
     this.controls.onInspect = () => this.inspect();
     this.player.onStep = (i) => {
@@ -149,12 +168,45 @@ export class Game {
   private resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.controls.isTouch ? 1.75 : 2);
-    this.renderer.setPixelRatio(pr);
-    this.renderer.setSize(w, h);
-    this.post.setSize(w * pr, h * pr);
+    this.pipeline.setSize(w, h, window.devicePixelRatio || 1);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  // ------------------------------------------------------------- settings
+
+  get currentSettings(): Settings {
+    return { ...this.settings };
+  }
+
+  applySettings(next: Settings) {
+    const qualityChanged = next.quality !== this.settings.quality;
+    this.settings = { ...next };
+    saveSettings(this.settings);
+
+    if (qualityChanged) {
+      this.profile = resolveProfile(this.settings);
+      this.pipeline.setProfile(this.profile);
+      this.flashlight.shadow.mapSize.set(this.profile.shadowMapSize, this.profile.shadowMapSize);
+      this.flashlight.shadow.map?.dispose();
+      this.flashlight.shadow.map = null;
+      if (this.built) assignShadowCasters(this.built.fixtureLights, this.profile);
+      this.resize();
+    }
+    this.pipeline.adaptive = this.settings.adaptiveResolution;
+    this.pipeline.setFilmEffects(this.settings.filmEffects);
+    this.applyPlayerSettings();
+  }
+
+  private applyPlayerSettings() {
+    this.controls.sensitivity = this.settings.lookSensitivity;
+    this.controls.invertY = this.settings.invertY;
+    this.player.headBob = this.settings.headBob;
+    this.audio.setMasterVolume(this.settings.masterVolume);
+    this.audio.captions = this.settings.captions;
+    this.haptics.enabled = this.settings.haptics;
+    this.baseFov = (this.controls.isTouch ? 73 : 68) + this.settings.fovOffset;
+    this.hud.setFpsVisible(this.settings.showFps);
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -203,12 +255,20 @@ export class Game {
     const built = buildFloor(spec, this.save.seed);
     this.built = built;
     this.scene.add(built.group);
-    this.scene.fog = new THREE.FogExp2(palette.fog, palette.fogDensity);
+    // volumetric in-scattering now supplies most of the near-field haze, so the
+    // exponential fog steps back to being a draw-distance fade
+    this.scene.fog = new THREE.FogExp2(
+      palette.fog,
+      palette.fogDensity * (this.profile.volumetrics ? 0.6 : 1),
+    );
     this.scene.background = new THREE.Color(palette.fog);
     this.ambient.color.set(palette.ambient);
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
     this.flashlight.intensity = this.flashBase;
+    this.pipeline.setGrade(GRADES[spec.palette]);
+    this.pipeline.setCeilingHeight(spec.ceilingHeight);
+    assignShadowCasters(built.fixtureLights, this.profile);
     this.collide = makeCollider(built);
 
     // walkable centers for occupancy sound placement
@@ -754,7 +814,7 @@ export class Game {
     const built = this.built;
     if (!built) {
       if (this.state === 'ending') this.updateEnding(dt);
-      this.post.render(dt);
+      this.pipeline.render(dt);
       return;
     }
 
@@ -841,6 +901,16 @@ export class Game {
     const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1);
     this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
 
+    // the frame the inspector is holding is the frame that is sharp
+    const docT = this.documenting ? Math.min(1, this.documenting.t / DOC_TIME) : 0;
+    this.docFocus += (docT - this.docFocus) * Math.min(1, dt * 5);
+    this.pipeline.setDof(this.docFocus * 0.85, Math.max(0.8, aim), 1.4);
+
+    // light the dust: the flashlight first, then whatever fixtures are near
+    this.pipeline.setVolumetricLights(
+      gatherVolumetricLights(this.flashlight, built.fixtureLights, camPos, this.profile),
+    );
+
     // props
     for (const u of built.updatables) u(dt, this.time);
 
@@ -893,7 +963,8 @@ export class Game {
       this.persist();
     }
 
-    this.post.render(dt);
+    this.hud.setFps(this.pipeline.smoothedFrameMs);
+    this.pipeline.render(dt);
   }
 
   private updateEnding(dt: number) {
@@ -942,6 +1013,28 @@ export class Game {
         if (a) this.logAmend(a);
       },
       attention: () => this.attention,
+      pipeline: this.pipeline,
+      volSample: () => {
+        const ls = gatherVolumetricLights(
+          this.flashlight,
+          this.built?.fixtureLights ?? [],
+          this.camera.position,
+          this.profile,
+        );
+        return ls.map((l) => ({
+          pos: l.position.toArray().map((n) => +n.toFixed(2)),
+          col: l.color.toArray().map((n) => +n.toFixed(4)),
+          range: l.range,
+          cos: [+l.cosOuter.toFixed(3), +l.cosInner.toFixed(3)],
+        }));
+      },
+      setDebugView: (v: 'none' | 'ao' | 'vol' | 'bloom' | 'depth' | 'scene', gain = 1) => {
+        this.pipeline.debugView = v;
+        this.pipeline.debugGain = gain;
+      },
+      setVolShadow: (on: boolean) => {
+        this.pipeline.debugNoVolShadow = !on;
+      },
       amendTargets: () => this.amendTargets,
       depart: () => {
         if (this.built) {

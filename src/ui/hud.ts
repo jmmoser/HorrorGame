@@ -14,6 +14,9 @@ export class Hud {
   private floorCardName = document.getElementById('floor-card-name')!;
   private floorCardSched = document.getElementById('floor-card-sched')!;
   private floorCardTimer: number | null = null;
+  private fps = document.getElementById('fps-readout')!;
+  private fpsVisible = false;
+  private fpsAccum = 0;
   private static DOC_CIRC = 75.4;
 
   show() {
@@ -82,6 +85,20 @@ export class Hud {
     void this.toast.offsetWidth;
     this.toast.style.animation = '';
     this.toastTimer = window.setTimeout(() => this.toast.classList.add('hidden'), 3600);
+  }
+
+  setFpsVisible(on: boolean) {
+    this.fpsVisible = on;
+    this.fps.classList.toggle('hidden', !on);
+  }
+
+  /** throttled so the readout itself isn't the thing costing frames */
+  setFps(frameMs: number) {
+    if (!this.fpsVisible) return;
+    this.fpsAccum += 1;
+    if (this.fpsAccum < 15) return;
+    this.fpsAccum = 0;
+    this.fps.textContent = `${Math.round(1000 / Math.max(frameMs, 0.1))} FPS`;
   }
 
   onLedgerTab(fn: () => void) {

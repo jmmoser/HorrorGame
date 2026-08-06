@@ -68,8 +68,19 @@
         <div id="floor-card-sched"></div>
       </div>
       <button id="ledger-tab" aria-label="Open ledger">LEDGER</button>
+      <button id="settings-btn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" />
+        </svg>
+      </button>
       <div id="log-toast" class="hidden"></div>
+      <div id="caption-line" class="hidden" aria-live="polite"></div>
+      <div id="fps-readout" class="hidden"></div>
     </div>
+
+    <!-- Settings / pause -->
+    <div id="settings" class="screen hidden"></div>
 
     <!-- The ledger -->
     <div id="ledger" class="hidden">

@@ -32,6 +32,9 @@ export class AudioEngine {
   /** 0..1 — how interested the building currently is. raises event density. */
   private attn = 0;
   private ducked = false;
+  private masterVolume = 1;
+  /** print sound events as text — the audio carries half the game */
+  captions = false;
 
   get unlocked(): boolean {
     return this.ctx !== null;
@@ -43,7 +46,7 @@ export class AudioEngine {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = MASTER_LEVEL;
+    this.master.gain.value = MASTER_LEVEL * this.masterVolume;
     this.master.connect(ctx.destination);
 
     // shared noise buffer
@@ -118,6 +121,11 @@ export class AudioEngine {
     this.ramp(this.droneGain.gain, Math.min(0.05, 0.004 + depth * 0.006), 6);
     this.nextEventAt = performance.now() / 1000 + 20 + this.rng() * 30;
     this.stopSpots();
+  }
+
+  setMasterVolume(v: number) {
+    this.masterVolume = Math.max(0, Math.min(1, v));
+    if (this.ctx) this.ramp(this.master.gain, MASTER_LEVEL * this.masterVolume, 0.25);
   }
 
   /** quiet between floors */

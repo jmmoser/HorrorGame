@@ -49,62 +49,267 @@ function toTexture(c: HTMLCanvasElement, repeat = 1): THREE.CanvasTexture {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat, repeat);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 2;
+  t.anisotropy = ANISOTROPY;
   return t;
 }
 
-export function wallTexture(p: Palette, seed: number): THREE.CanvasTexture {
-  const rng = mulberry32(seed ^ 0x57a11);
-  const { c, g } = makeCanvas(256, 256);
-  g.fillStyle = hex(p.wall);
-  g.fillRect(0, 0, 256, 256);
-  // vertical drag marks / paint unevenness
-  for (let x = 0; x < 256; x += 2) {
-    g.fillStyle = `rgba(0,0,0,${0.03 + 0.05 * rng()})`;
-    if (rng() > 0.6) g.fillRect(x, 0, 1, 256);
-  }
-  stains(g, 256, 256, rng, 7, 0.12);
-  // scuff line at "waist height"
-  g.fillStyle = 'rgba(0,0,0,0.10)';
-  g.fillRect(0, 176, 256, 4);
-  grain(g, 256, 256, rng, 0.05);
-  return toTexture(c);
+/** non-colour data: normals and roughness must not be sRGB-decoded */
+function toDataTexture(c: HTMLCanvasElement): THREE.CanvasTexture {
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = ANISOTROPY;
+  return t;
 }
 
-export function floorTexture(p: Palette, seed: number): THREE.CanvasTexture {
-  const rng = mulberry32(seed ^ 0xf100e);
-  const { c, g } = makeCanvas(256, 256);
-  g.fillStyle = hex(p.floor);
-  g.fillRect(0, 0, 256, 256);
-  // tile seams
-  g.strokeStyle = 'rgba(0,0,0,0.22)';
-  g.lineWidth = 1;
-  for (let i = 0; i <= 256; i += 64) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.stroke();
-    g.beginPath(); g.moveTo(0, i); g.lineTo(256, i); g.stroke();
-  }
-  stains(g, 256, 256, rng, 12, 0.2);
-  // thirty years of dust film
-  g.fillStyle = 'rgba(120,110,90,0.10)';
-  g.fillRect(0, 0, 256, 256);
-  grain(g, 256, 256, rng, 0.06);
-  return toTexture(c);
+/** set once from the renderer's capabilities — sharp grazing angles matter a
+ *  lot in a game that is mostly long corridors seen edge-on */
+let ANISOTROPY = 4;
+export function setTextureAnisotropy(max: number) {
+  ANISOTROPY = Math.min(16, Math.max(1, max));
 }
 
-export function ceilingTexture(p: Palette, seed: number): THREE.CanvasTexture {
-  const rng = mulberry32(seed ^ 0xce111);
-  const { c, g } = makeCanvas(256, 256);
-  g.fillStyle = hex(p.ceiling);
-  g.fillRect(0, 0, 256, 256);
-  g.strokeStyle = 'rgba(0,0,0,0.28)';
-  for (let i = 0; i <= 256; i += 128) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.stroke();
-    g.beginPath(); g.moveTo(0, i); g.lineTo(256, i); g.stroke();
+// ---------------------------------------------------------- surface relief
+
+/**
+ * A surface is three canvases: what colour it is, how it is shaped, and how
+ * polished it is. The shape one is a height field, and the normal map is its
+ * Sobel derivative — which is what turns a flat quad into plaster that catches
+ * the flashlight at a grazing angle.
+ */
+export interface SurfaceMaps {
+  map: THREE.CanvasTexture;
+  normalMap: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+  normalScale: number;
+  dispose: () => void;
+}
+
+/** wrapping separable box blur — a height field sampled per-texel produces a
+ *  normal map that sparkles at grazing angles, which is exactly the angle this
+ *  game is always at. Soften it before taking the derivative. */
+function blurHeight(src: Uint8ClampedArray, w: number, h: number, radius: number): Float32Array {
+  const a = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) a[i] = src[i * 4];
+  const b = new Float32Array(w * h);
+  const n = radius * 2 + 1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let k = -radius; k <= radius; k++) sum += a[y * w + ((x + k + w) % w)];
+      b[y * w + x] = sum / n;
+    }
   }
-  // sagging water damage in a corner of some tiles
-  stains(g, 256, 256, rng, 5, 0.25);
-  grain(g, 256, 256, rng, 0.04);
-  return toTexture(c);
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      let sum = 0;
+      for (let k = -radius; k <= radius; k++) sum += b[((y + k + h) % h) * w + x];
+      a[y * w + x] = sum / n;
+    }
+  }
+  return a;
+}
+
+function normalFromHeight(height: HTMLCanvasElement, strength: number, blur: number): HTMLCanvasElement {
+  const w = height.width;
+  const h = height.height;
+  const raw = height.getContext('2d')!.getImageData(0, 0, w, h).data;
+  const src = blurHeight(raw, w, h, blur);
+  const { c, g } = makeCanvas(w, h);
+  const out = g.createImageData(w, h);
+  // wrap the sampling so the map tiles without a visible seam
+  const at = (x: number, y: number) => src[((y + h) % h) * w + ((x + w) % w)] / 255;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const tl = at(x - 1, y - 1), t = at(x, y - 1), tr = at(x + 1, y - 1);
+      const l = at(x - 1, y), r = at(x + 1, y);
+      const bl = at(x - 1, y + 1), b = at(x, y + 1), br = at(x + 1, y + 1);
+      const dx = tl + 2 * l + bl - (tr + 2 * r + br);
+      const dy = tl + 2 * t + tr - (bl + 2 * b + br);
+      let nx = dx * strength;
+      let ny = dy * strength;
+      const nz = 1;
+      const len = Math.hypot(nx, ny, nz);
+      nx /= len;
+      ny /= len;
+      const i = (y * w + x) * 4;
+      out.data[i] = (nx * 0.5 + 0.5) * 255;
+      out.data[i + 1] = (ny * 0.5 + 0.5) * 255;
+      out.data[i + 2] = (nz / len) * 0.5 * 255 + 127.5;
+      out.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+  return c;
+}
+
+function makeSurface(
+  size: number,
+  normalScale: number,
+  blur: number,
+  draw: (albedo: CanvasRenderingContext2D, height: CanvasRenderingContext2D, rough: CanvasRenderingContext2D, rng: Rng) => void,
+  seed: number,
+): SurfaceMaps {
+  const rng = mulberry32(seed);
+  const a = makeCanvas(size, size);
+  const hgt = makeCanvas(size, size);
+  const rgh = makeCanvas(size, size);
+  hgt.g.fillStyle = '#808080';
+  hgt.g.fillRect(0, 0, size, size);
+  rgh.g.fillStyle = '#e0e0e0';
+  rgh.g.fillRect(0, 0, size, size);
+  draw(a.g, hgt.g, rgh.g, rng);
+  const map = toTexture(a.c);
+  const normalMap = toDataTexture(normalFromHeight(hgt.c, 2.2, blur));
+  const roughnessMap = toDataTexture(rgh.c);
+  return {
+    map,
+    normalMap,
+    roughnessMap,
+    normalScale,
+    dispose: () => {
+      map.dispose();
+      normalMap.dispose();
+      roughnessMap.dispose();
+    },
+  };
+}
+
+/** speckled plaster/aggregate relief — the base texture of every hard surface */
+function speckle(
+  h: CanvasRenderingContext2D,
+  size: number,
+  rng: Rng,
+  count: number,
+  amp: number,
+  rMin = 1.8,
+  rSpan = 5.5,
+) {
+  for (let i = 0; i < count; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = rMin + rng() * rSpan;
+    const v = 128 + (rng() - 0.5) * 2 * amp;
+    h.fillStyle = `rgb(${v | 0},${v | 0},${v | 0})`;
+    h.beginPath();
+    h.arc(x, y, r, 0, Math.PI * 2);
+    h.fill();
+  }
+}
+
+export function wallSurface(p: Palette, seed: number): SurfaceMaps {
+  return makeSurface(512, 0.42, 2, (g, h, r, rng) => {
+    g.fillStyle = hex(p.wall);
+    g.fillRect(0, 0, 512, 512);
+    // vertical drag marks / paint unevenness, cut slightly into the plaster
+    for (let x = 0; x < 512; x += 4) {
+      if (rng() > 0.6) {
+        g.fillStyle = `rgba(0,0,0,${0.03 + 0.05 * rng()})`;
+        g.fillRect(x, 0, 2, 512);
+        h.fillStyle = 'rgba(0,0,0,0.10)';
+        h.fillRect(x, 0, 2, 512);
+      }
+    }
+    stains(g, 512, 512, rng, 9, 0.12);
+    // water damage is where thirty years of paint went soft: darker, glossier
+    for (let i = 0; i < 5; i++) {
+      const x = rng() * 512;
+      const y = rng() * 512;
+      const rad = 30 + rng() * 70;
+      const grd = r.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+      grd.addColorStop(0, 'rgba(120,120,120,0.55)');
+      grd.addColorStop(1, 'rgba(224,224,224,0)');
+      r.fillStyle = grd;
+      r.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    // the dado rail scuff, at the height a trolley hits a wall for thirty years
+    g.fillStyle = 'rgba(0,0,0,0.10)';
+    g.fillRect(0, 352, 512, 8);
+    h.fillStyle = 'rgba(0,0,0,0.35)';
+    h.fillRect(0, 352, 512, 4);
+    h.fillStyle = 'rgba(255,255,255,0.30)';
+    h.fillRect(0, 356, 512, 4);
+    speckle(h, 512, rng, 900, 16);
+    grain(g, 512, 512, rng, 0.05, 2600);
+  }, seed ^ 0x57a11);
+}
+
+export function floorSurface(p: Palette, seed: number): SurfaceMaps {
+  return makeSurface(512, 0.55, 2, (g, h, r, rng) => {
+    g.fillStyle = hex(p.floor);
+    g.fillRect(0, 0, 512, 512);
+    // tile seams — real grooves, which is what makes a floor read as tiled
+    // rather than as a photograph of a tiled floor
+    g.strokeStyle = 'rgba(0,0,0,0.22)';
+    h.strokeStyle = 'rgba(0,0,0,0.85)';
+    r.strokeStyle = 'rgba(255,255,255,0.9)';
+    g.lineWidth = 2;
+    h.lineWidth = 4;
+    r.lineWidth = 5;
+    for (let i = 0; i <= 512; i += 128) {
+      for (const ctx of [g, h, r]) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+      }
+    }
+    // per-tile shade variation: no two tiles aged the same
+    for (let ty = 0; ty < 4; ty++) {
+      for (let tx = 0; tx < 4; tx++) {
+        g.fillStyle = `rgba(0,0,0,${rng() * 0.07})`;
+        g.fillRect(tx * 128 + 2, ty * 128 + 2, 124, 124);
+      }
+    }
+    stains(g, 512, 512, rng, 16, 0.2);
+    // thirty years of dust film, and a polished path where feet went
+    g.fillStyle = 'rgba(120,110,90,0.10)';
+    g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 4; i++) {
+      const x = rng() * 512;
+      const y = rng() * 512;
+      const rad = 60 + rng() * 90;
+      const grd = r.createRadialGradient(x, y, 0, x, y, rad);
+      grd.addColorStop(0, 'rgba(96,96,96,0.5)');
+      grd.addColorStop(1, 'rgba(224,224,224,0)');
+      r.fillStyle = grd;
+      r.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    speckle(h, 512, rng, 700, 12);
+    grain(g, 512, 512, rng, 0.06, 2800);
+  }, seed ^ 0xf100e);
+}
+
+export function ceilingSurface(p: Palette, seed: number): SurfaceMaps {
+  // the ceiling is uniformly matte — nothing up there has been touched
+  return makeSurface(512, 0.34, 2, (g, h, _r, rng) => {
+    g.fillStyle = hex(p.ceiling);
+    g.fillRect(0, 0, 512, 512);
+    // suspended ceiling grid: the T-bar sits proud, the tile sits back
+    g.strokeStyle = 'rgba(0,0,0,0.28)';
+    g.lineWidth = 3;
+    h.strokeStyle = 'rgba(255,255,255,0.75)';
+    h.lineWidth = 6;
+    for (let i = 0; i <= 512; i += 256) {
+      for (const ctx of [g, h]) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+      }
+    }
+    // mineral fibre tile: pitted, and the pits are the whole look
+    speckle(h, 512, rng, 4200, 15, 0.8, 2.6);
+    // sagging water damage in a corner of some tiles
+    stains(g, 512, 512, rng, 7, 0.25);
+    for (let i = 0; i < 3; i++) {
+      const x = rng() * 512;
+      const y = rng() * 512;
+      const rad = 40 + rng() * 60;
+      const grd = h.createRadialGradient(x, y, 0, x, y, rad);
+      grd.addColorStop(0, 'rgba(0,0,0,0.45)');
+      grd.addColorStop(1, 'rgba(128,128,128,0)');
+      h.fillStyle = grd;
+      h.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    grain(g, 512, 512, rng, 0.04, 2200);
+  }, seed ^ 0xce111);
 }
 
 /** City seen through glass. mood decides how wrong it is allowed to look. */
