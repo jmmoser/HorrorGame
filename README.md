@@ -62,7 +62,9 @@ certainty that the building knows it is being documented.
   logged, ruled-off "FLOOR −0N FILED" lines when you descend, and a tear-out
   **share card** (Web Share / download + link). The player's seed is worn as
   a **case number** (CASE S7-…) on the title screen, the ledger head, and the
-  share card — two inspectors on the same case walk the same building.
+  share card. Two inspectors on the same case walk the same building, and you
+  can actually get there: type a case number on the title screen, or follow a
+  share link, which carries the case as well as the depth reached.
 - **The ending offers reassignment** — a new case number, a rerolled
   building.
 - **Mobile + desktop controls** — virtual stick + drag look + tap to log,

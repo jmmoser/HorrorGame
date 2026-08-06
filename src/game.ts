@@ -12,6 +12,7 @@ import {
 import { fillTokens } from './world/discrepancies';
 import { AMENDMENTS, MUNDANE_TOASTS, MUNDANE_TOAST_WEARY, mundaneEntry } from './world/mundane';
 import { CS, WALL_H, cellCenter, charAt, facingToYaw, isWalkable } from './world/grid';
+import { setTextureAnisotropy } from './world/textures';
 import { floorRng, hashCombine, mulberry32 } from './core/rng';
 import type { AlterationDef, EntryKind, LedgerEntry, SaveData } from './core/types';
 import { caseNumber, eraseSave, writeSave } from './core/save';
@@ -121,6 +122,10 @@ export class Game {
       antialias: false,
       powerPreference: 'high-performance',
     });
+
+    // grazing angles are the default view down a corridor; take all the
+    // anisotropic filtering the device will give
+    setTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);

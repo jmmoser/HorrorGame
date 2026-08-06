@@ -152,15 +152,22 @@ function makeSurface(
 ): SurfaceMaps {
   const rng = mulberry32(seed);
   const a = makeCanvas(size, size);
-  const hgt = makeCanvas(size, size);
-  const rgh = makeCanvas(size, size);
+  // Relief and gloss are both low-frequency by the time they reach the eye, and
+  // the blur+Sobel below is the expensive part of loading a floor. Draw them at
+  // half size under a scale transform, so the drawing code below can keep
+  // working in albedo coordinates.
+  const half = size >> 1;
+  const hgt = makeCanvas(half, half);
+  const rgh = makeCanvas(half, half);
   hgt.g.fillStyle = '#808080';
-  hgt.g.fillRect(0, 0, size, size);
+  hgt.g.fillRect(0, 0, half, half);
   rgh.g.fillStyle = '#e0e0e0';
-  rgh.g.fillRect(0, 0, size, size);
+  rgh.g.fillRect(0, 0, half, half);
+  hgt.g.setTransform(0.5, 0, 0, 0.5, 0, 0);
+  rgh.g.setTransform(0.5, 0, 0, 0.5, 0, 0);
   draw(a.g, hgt.g, rgh.g, rng);
   const map = toTexture(a.c);
-  const normalMap = toDataTexture(normalFromHeight(hgt.c, 2.2, blur));
+  const normalMap = toDataTexture(normalFromHeight(hgt.c, 2.2, Math.max(1, Math.round(blur / 2))));
   const roughnessMap = toDataTexture(rgh.c);
   return {
     map,

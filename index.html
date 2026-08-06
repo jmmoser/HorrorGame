@@ -50,6 +50,16 @@
         <button id="btn-resume" class="ghost-btn hidden">resume — floor <span id="resume-floor"></span></button>
         <p id="title-case" class="title-visitor hidden"></p>
         <p id="title-visitor" class="title-visitor hidden"></p>
+        <div id="case-entry">
+          <button id="btn-case" class="link-btn">inspect an assigned case</button>
+          <form id="case-form" class="hidden">
+            <label for="case-input">CASE NUMBER</label>
+            <input id="case-input" type="text" inputmode="latin" autocomplete="off"
+              spellcheck="false" placeholder="S7-1DEB27E5" maxlength="20" />
+            <button type="submit" class="ghost-btn" id="btn-case-go">accept assignment</button>
+            <p id="case-error" class="hidden">NOT A CASE ON THIS SURVEY.</p>
+          </form>
+        </div>
       </div>
     </div>
 

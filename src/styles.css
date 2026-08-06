@@ -642,3 +642,72 @@ body {
   text-shadow: 0 1px 6px #000;
   transition: opacity 0.5s ease;
 }
+
+/* ---------- taking someone else's case ---------- */
+#case-entry {
+  margin-top: 1.6rem;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  border-bottom: 1px dotted #4a463d;
+  color: #5c574c;
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.2em;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  transition: color 0.4s, border-color 0.4s;
+}
+
+.link-btn:hover {
+  color: var(--ink-dim);
+  border-color: var(--ink-dim);
+}
+
+#case-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+#case-form label {
+  font-size: 0.55rem;
+  letter-spacing: 0.3em;
+  color: #5c574c;
+}
+
+#case-input {
+  /* the body disables touch gestures wholesale; the one text field needs them */
+  touch-action: manipulation;
+  background: rgba(216, 210, 196, 0.04);
+  border: 1px solid #4a463d;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.22em;
+  text-align: center;
+  text-transform: uppercase;
+  padding: 0.6rem 0.8rem;
+  width: min(80vw, 15rem);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#case-input:focus {
+  outline: none;
+  border-color: var(--ink-dim);
+}
+
+#case-form .ghost-btn {
+  margin-top: 0.2rem;
+}
+
+#case-error {
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  color: var(--red-ink);
+  filter: brightness(1.9);
+}

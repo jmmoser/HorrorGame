@@ -42,6 +42,24 @@ export function caseNumber(seed: number): string {
   return `CASE S7-${(seed >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 }
 
+/**
+ * The inverse of `caseNumber`. Accepts what a player will actually paste: the
+ * printed form, the bare hex, lower case, with or without the CASE/S7 prefix,
+ * and with the kind of stray whitespace that survives a copy out of a chat
+ * window. Returns null if it isn't a case number at all.
+ */
+export function parseCaseNumber(input: string): number | null {
+  const cleaned = input.trim().toUpperCase().replace(/[\s\u2013\u2014]/g, '');
+  const m = /^(?:CASE)?-?(?:S7)?-?([0-9A-F]{1,8})$/.exec(cleaned);
+  if (!m) return null;
+  const seed = parseInt(m[1], 16);
+  return Number.isFinite(seed) ? seed >>> 0 : null;
+}
+
+export function saveForSeed(seed: number): SaveData {
+  return { ...freshSave(), seed: seed >>> 0 };
+}
+
 export function eraseSave(): void {
   try {
     localStorage.removeItem(KEY);
