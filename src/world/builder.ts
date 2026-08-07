@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { FloorSpec } from '../core/types';
+import type { FloorSpec, PropRole } from '../core/types';
 import { hashCombine, mulberry32 } from '../core/rng';
 import { PALETTES } from './palette';
 import {
@@ -21,6 +21,7 @@ import {
   type ObstacleAABB,
 } from './grid';
 import { buildProp, type PropInstance } from './props';
+import { Presence } from './presence';
 import { ceilingSurface, floorSurface, puffTexture, wallSurface } from './textures';
 import { selectForFloor, type SelectedDiscrepancy } from './discrepancies';
 
@@ -48,6 +49,27 @@ export interface NoticeTarget {
   logged: boolean;
 }
 
+/** writing that is only there with the flashlight off — transcribable, once
+ *  the eye has had long enough in the dark to make it out */
+export interface MarkTarget {
+  anchor: string;
+  hit: THREE.Mesh;
+  prop: PropInstance;
+  entry: string;
+  logged: boolean;
+  /** world position, for placing the reveal glow and the audio */
+  pos: THREE.Vector3;
+}
+
+/** a prop the hand can do something to: a door, a chair, a handset */
+export interface HandTarget {
+  anchor: string;
+  hit: THREE.Mesh;
+  prop: PropInstance;
+  role: PropRole;
+  pos: THREE.Vector3;
+}
+
 export interface BuiltFloor {
   spec: FloorSpec;
   group: THREE.Group;
@@ -56,6 +78,10 @@ export interface BuiltFloor {
   targets: ActiveTarget[];
   mundanes: MundaneTarget[];
   notices: NoticeTarget[];
+  marks: MarkTarget[];
+  hands: HandTarget[];
+  /** the thing that is on this floor with the inspector */
+  presence: Presence;
   /** the guaranteed anchor-less discrepancy (floor 5's altered ledger), if any */
   ledgerDiscrepancy: SelectedDiscrepancy | null;
   elevator: ElevatorRig;
@@ -378,6 +404,8 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const targets: ActiveTarget[] = [];
   const mundanes: MundaneTarget[] = [];
   const notices: NoticeTarget[] = [];
+  const marks: MarkTarget[] = [];
+  const hands: HandTarget[] = [];
   const audioSpots: BuiltFloor['audioSpots'] = [];
   const obstacles: ObstacleAABB[] = [];
   const litPositions: THREE.Vector3[] = [];
@@ -434,7 +462,29 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
       const p = new THREE.Vector3(c.x, 1.0, c.z);
       audioSpots.push({ kind: prop.audioKind, pos: p });
     }
-    if (sel && prop.hit) {
+    // anything the hand can reach is worth knowing about, wrong or not
+    if (prop.hit && prop.actions) {
+      hands.push({
+        anchor: letter,
+        hit: prop.hit,
+        prop,
+        role: anchor.role,
+        pos: new THREE.Vector3(c.x, 1.2, c.z),
+      });
+    }
+
+    if (anchor.role === 'mark' && prop.hit && anchor.mark) {
+      // the writing is never a discrepancy: it is not on any schedule, so
+      // there is nothing for it to disagree with
+      marks.push({
+        anchor: letter,
+        hit: prop.hit,
+        prop,
+        entry: anchor.mark.entry,
+        logged: false,
+        pos: new THREE.Vector3(c.x, 1.5, c.z),
+      });
+    } else if (sel && prop.hit) {
       targets.push({
         sel,
         hit: prop.hit,
@@ -487,6 +537,13 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
 
   applyShadowFlags(group);
 
+  // ---- whatever else is on this floor
+  // built after the shadow-flag pass on purpose: the presence sets its own
+  // flags, and half the time it is nothing *but* a shadow.
+  const presence = new Presence(grid, mulberry32(hashCombine(seed, spec.floor * 8191 + 17)));
+  presence.setShadowCasters(litPositions);
+  group.add(presence.group);
+
   return {
     spec,
     group,
@@ -495,6 +552,9 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     targets,
     mundanes,
     notices,
+    marks,
+    hands,
+    presence,
     ledgerDiscrepancy,
     elevator,
     props,
@@ -503,6 +563,7 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     litPositions,
     fixtureLights,
     dispose: () => {
+      presence.dispose();
       group.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {
           o.geometry?.dispose?.();

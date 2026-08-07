@@ -427,6 +427,14 @@ export const COMPOSITE_FRAG = /* glsl */ `
   uniform float focusDistance;
   uniform float focusRange;
 
+  // the building's grip, 0..1, and the state of an eye that has been in its
+  // own dark long enough to start being useful
+  uniform float dread;
+  uniform float darkAdapt;
+  // the part of the grip that is allowed to touch grain and channel split —
+  // zero when the player has turned film effects off for comfort
+  uniform float dreadFilm;
+
   in vec2 vUv;
   layout(location = 0) out vec4 fragColor;
 
@@ -457,7 +465,9 @@ export const COMPOSITE_FRAG = /* glsl */ `
     // --- lens: sample the scene three times, once per channel, off-axis
     vec2 fromCenter = uv - 0.5;
     float r2 = dot(fromCenter, fromCenter);
-    vec2 caOff = fromCenter * aberration * (1.0 + r2 * 4.0);
+    // the grip pulls the channels apart at the edges, where nobody is looking
+    // directly and everybody notices anyway
+    vec2 caOff = fromCenter * (aberration + dreadFilm * 0.0045) * (1.0 + r2 * 4.0);
 
     vec3 col;
     col.r = texture(tDiffuse, uv + caOff).r;
@@ -488,21 +498,31 @@ export const COMPOSITE_FRAG = /* glsl */ `
     col += texture(tBloom, uv).rgb * bloomStrength;
     #endif
 
-    // --- tone
-    col = acesFilm(col * exposure);
+    // --- tone. Dark adaptation is mostly a shadow lift, not a gain: an eye
+    // that has been in the dark for twenty seconds buys detail at the bottom
+    // of the range, and buying it by multiplying exposure would just blow the
+    // one lit fixture in the room to white and hide more than it revealed.
+    col = acesFilm(col * exposure * (1.0 + darkAdapt * 0.55));
 
     // --- grade: lift/gamma/gain, then a split tone, then saturation
     col = gradeLift + col * (gradeGain - gradeLift);
-    col = pow(max(col, 0.0), vec3(gradeGamma));
+    // the lift itself: a gamma under 1 raises the darks and leaves white at
+    // white, which is exactly the shape of scotopic vision
+    col = pow(max(col, 0.0), vec3(gradeGamma * (1.0 - darkAdapt * 0.42)));
     float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
     col *= mix(shadowTint, highlightTint, smoothstep(0.15, 0.75, luma));
-    col = mix(vec3(luma), col, saturation);
+    // colour is the first thing fear takes, and scotopic vision has none of
+    // it either — the two reasons stack, so the desaturation does too
+    col = mix(vec3(luma), col, saturation * (1.0 - dread * 0.42) * (1.0 - darkAdapt * 0.5));
 
-    // --- lens, part two
-    float vig = 1.0 - smoothstep(0.15, 0.85, r2 * (1.6 + vignette));
-    col *= mix(1.0, vig, vignette + 0.15);
+    // --- lens, part two. The vignette closes with the grip and breathes with
+    // it: a slow tunnel, on a period no one would call a pulse out loud.
+    float breathe = sin(time * 0.9) * 0.5 + 0.5;
+    float vg = vignette + dread * (0.30 + breathe * 0.10);
+    float vig = 1.0 - smoothstep(0.15, 0.85, r2 * (1.6 + vg));
+    col *= mix(1.0, vig, vg + 0.15);
 
-    float g = (ign(gl_FragCoord.xy + time * 71.31) - 0.5) * grain;
+    float g = (ign(gl_FragCoord.xy + time * 71.31) - 0.5) * (grain + dreadFilm * (0.05 + darkAdapt * 0.14));
     col += g * (1.0 - luma * 0.5);
 
     fragColor = vec4(linearToSRGB(max(col, 0.0)), 1.0);

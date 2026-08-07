@@ -1,4 +1,4 @@
-import type { AlterationDef, AnchorDef, PropRole } from '../core/types';
+import type { AlterationKind, AnchorDef, PropRole } from '../core/types';
 import type { Rng } from '../core/rng';
 
 // Everything is loggable. Logging a thing that is *correct* writes one of
@@ -81,10 +81,12 @@ export const MUNDANE_TOAST_WEARY = 'noted: nothing is wrong here. logged anyway.
 // A prop the building silently changed can be logged AGAIN. The amendment is
 // the payoff for noticing — and the building notices being noticed.
 
-export const AMENDMENTS: Record<
-  AlterationDef['kind'],
-  { entry: string; toast: string }
-> = {
+export const AMENDMENTS: Record<AlterationKind, { entry: string; toast: string }> = {
+  'handset-lifted': {
+    entry:
+      'Amendment. The handset I replaced in its cradle — I have the entry, I have the time — is lying beside the base again, cups up, exactly as I first found it. Laid down, not dropped. Somebody is being tidy about this.',
+    toast: 'amended: I put that back',
+  },
   'door-ajar': {
     entry:
       'Amendment. A door on this floor is standing open. It was shut when I arrived — my own earlier entry says so. I have been alone here the entire time.',
@@ -105,4 +107,48 @@ export const AMENDMENTS: Record<
       'Amendment. A chair on this floor has turned to face the elevator. I did not see it happen. Nothing here happens while I am looking.',
     toast: 'amended: the chair has turned',
   },
+};
+
+// ------------------------------------------------------------- the record
+// The ledger is the only thing the inspector brought in and the only thing
+// they will carry out, which makes it the obvious thing to get at. Past a
+// certain amount of attention the building stops answering documentation with
+// furniture and starts answering it with edits.
+//
+// A revision keeps the first sentence. That is what makes it work: the entry
+// is recognisably yours right up until it isn't, and you have to read to the
+// end to find where you stopped writing it.
+
+const REVISIONS: string[] = [
+  '{FIRST}. This entry has been reviewed and found accurate. The inspector is thorough. The inspector should continue.',
+  '{FIRST}. Correction: not a discrepancy. A feature of the structure, present since before the structure. Filed in error. Apologies for the trouble.',
+  '{FIRST}. I went back to check. It is still there. It is nearer the door than it was, and the door is the one I came in by.',
+  '{FIRST}. The inspector was alone at the time of writing. This has been confirmed. This will continue to be confirmed for as long as it is true.',
+  '{FIRST}. I have read this entry four times now and each time there is one more sentence in it that I did not write, and each time I cannot tell you which one.',
+];
+
+/** entries that were never the inspector's, written in the inspector's hand */
+const INTERPOLATIONS: string[] = [
+  'I did not write this entry. It is in my handwriting. It says, in full: THE INSPECTION IS GOING WELL.',
+  'This entry is numbered and dated and is not mine. It records the position of the inspector at the time of writing, to the nearest metre, from behind.',
+  'An entry between two of my own, in my hand, in my pencil: "he has stopped hurrying. good."',
+  'An entry I did not make: a list of the doors I have not opened yet. It is shorter than it was on the floor above.',
+];
+
+/** the building's edit of one of the inspector's own entries */
+export function reviseEntry(text: string, rng: Rng): string {
+  const first = text.split('.')[0];
+  return REVISIONS[Math.floor(rng() * REVISIONS.length) % REVISIONS.length].replace('{FIRST}', first);
+}
+
+/** a whole entry the inspector did not write */
+export function interpolatedEntry(rng: Rng): string {
+  return INTERPOLATIONS[Math.floor(rng() * INTERPOLATIONS.length) % INTERPOLATIONS.length];
+}
+
+/** what the inspector writes when they catch the ledger having been edited */
+export const REVISION_AMENDMENT = {
+  entry:
+    'Amendment. An earlier entry in this ledger has been altered. I have compared it against my own memory of writing it, which is the only copy there is, which is the problem. The hand is mine. The sentence is not. Logging the ledger as a discrepancy against itself.',
+  toast: 'amended: that is not what I wrote',
 };

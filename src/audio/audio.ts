@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { FloorSpec } from '../core/types';
+import type { FloorSpec, OccupancyKind } from '../core/types';
 import type { Rng } from '../core/rng';
 
 // The entire soundscape is synthesized: room tone, ventilation, a sub-bass
@@ -10,11 +10,13 @@ import type { Rng } from '../core/rng';
 const MASTER_LEVEL = 0.6;
 
 /** caption text per occupancy sound, in the register of the ledger itself */
-const OCCUPANCY_CAPTION: Record<'phone-ring' | 'chair-scrape' | 'knock' | 'below', string> = {
+const OCCUPANCY_CAPTION: Record<OccupancyKind, string> = {
   'phone-ring': 'a telephone ringing',
   'chair-scrape': 'a chair dragged across a floor',
   knock: 'three knocks',
   below: 'movement',
+  footsteps: 'unhurried footsteps, walking away',
+  whisper: 'a voice, too quiet to be words',
 };
 
 interface OccupancySource {
@@ -63,6 +65,16 @@ export class AudioEngine {
   private humGain!: GainNode;
   private droneGain!: GainNode;
   private roomGain!: GainNode;
+  /** the inspector's own lungs, which are the loudest thing down here */
+  private breathGain!: GainNode;
+  private breathDepth!: GainNode;
+  private breathLfo!: OscillatorNode;
+  /** how far into "stopped to listen" we are, 0..1 */
+  private listenAmt = 0;
+  private listenTarget = 0;
+  private dread = 0;
+  /** the depth-driven floor under the drone, before dread adds to it */
+  private droneBase = 0.004;
   private noiseBuf!: AudioBuffer;
   private active: OccupancySource[] = [];
   private spotNodes: Array<{ stop: () => void }> = [];
@@ -160,6 +172,26 @@ export class AudioEngine {
     this.droneGain.connect(this.master);
     drone.start();
     drone2.start();
+
+    // the inspector's breathing. Silent at rest, and the price of the run:
+    // once it is up, it is the only thing close enough to hear.
+    const air = ctx.createBufferSource();
+    air.buffer = this.noiseBuf;
+    air.loop = true;
+    const airBand = ctx.createBiquadFilter();
+    airBand.type = 'bandpass';
+    airBand.frequency.value = 520;
+    airBand.Q.value = 0.8;
+    this.breathGain = ctx.createGain();
+    this.breathGain.gain.value = 0;
+    this.breathLfo = ctx.createOscillator();
+    this.breathLfo.frequency.value = 0.42;
+    this.breathDepth = ctx.createGain();
+    this.breathDepth.gain.value = 0;
+    this.breathLfo.connect(this.breathDepth).connect(this.breathGain.gain);
+    air.connect(airBand).connect(this.breathGain).connect(this.master);
+    air.start();
+    this.breathLfo.start();
   }
 
   /**
@@ -219,7 +251,8 @@ export class AudioEngine {
     if (!this.ctx) return;
     this.ramp(this.roomGain.gain, 0.014, 3);
     this.ramp(this.humGain.gain, 0.008 * spec.hum + 0.002, 3);
-    this.ramp(this.droneGain.gain, Math.min(0.05, 0.004 + depth * 0.006), 6);
+    this.droneBase = Math.min(0.05, 0.004 + depth * 0.006);
+    this.ramp(this.droneGain.gain, this.droneBase, 6);
     this.nextEventAt = performance.now() / 1000 + 20 + this.rng() * 30;
     this.stopSpots();
     // the floor's own tail — offices are dead, the lower lobby is not
@@ -240,6 +273,11 @@ export class AudioEngine {
     this.ducked = true;
     this.ramp(this.roomGain.gain, 0.004, 1.2);
     this.ramp(this.humGain.gain, 0.002, 1.2);
+    this.ramp(this.breathGain.gain, 0, 1.2);
+    this.ramp(this.breathDepth.gain, 0, 1.2);
+    this.ramp(this.bus.gain, 1, 0.6);
+    this.listenAmt = 0;
+    this.listenTarget = 0;
     this.stopOccupancy();
     this.stopSpots();
   }
@@ -250,6 +288,36 @@ export class AudioEngine {
     this.attn = Math.max(0, Math.min(1, a));
     if (!this.ctx || this.ducked) return;
     this.ramp(this.roomGain.gain, 0.014 + this.attn * 0.006, 5);
+  }
+
+  /**
+   * The grip, once a frame. Everything here has a time constant measured in
+   * seconds: the drone thickens, the room closes in, and stopping to listen
+   * pulls the room tone out from under the world so the world can be heard.
+   */
+  setMood(dread: number, breath: number, listening: boolean, dt: number) {
+    this.dread = Math.max(0, Math.min(1, dread));
+    if (!this.ctx || this.ducked) return;
+    this.listenTarget = listening ? 1 : 0;
+    this.listenAmt += (this.listenTarget - this.listenAmt) * Math.min(1, dt * (listening ? 2.4 : 1.6));
+    const l = this.listenAmt;
+
+    // breathing: level and rate both ride the run
+    const b = Math.max(0, Math.min(1, breath));
+    this.breathGain.gain.setTargetAtTime(b * b * 0.03, this.ctx.currentTime, 0.25);
+    this.breathDepth.gain.setTargetAtTime(b * b * 0.028, this.ctx.currentTime, 0.25);
+    this.breathLfo.frequency.setTargetAtTime(0.4 + b * 0.62, this.ctx.currentTime, 0.6);
+
+    // listening: the room gets out of the way, the world comes forward
+    this.ramp(this.roomGain.gain, (0.014 + this.dread * 0.01) * (1 - 0.75 * l), 0.5);
+    this.ramp(this.humGain.gain, (0.008 * (this.floorSpec?.hum ?? 0.4) + 0.002) * (1 - 0.6 * l), 0.5);
+    this.ramp(this.bus.gain, 1 + l * 1.5, 0.5);
+    this.ramp(this.droneGain.gain, this.droneBase + this.dread * 0.03, 4);
+  }
+
+  /** how attentive the listener currently is, 0..1 — the HUD dims for it */
+  get listenLevel(): number {
+    return this.listenAmt;
   }
 
   get attention(): number {
@@ -294,19 +362,193 @@ export class AudioEngine {
 
   private stepParity = false;
 
-  footstep(intensity: number, surface: FloorSpec['palette']) {
+  footstep(intensity: number, surface: FloorSpec['palette'], running = false) {
     const soft = surface === 'sodium-orange' || surface === 'tungsten-dust'; // carpet-ish floors
     // alternate feet land slightly differently; every step rolls its own
     // timbre and level so a walk never turns into a metronome
     this.stepParity = !this.stepParity;
     const foot = this.stepParity ? 1 : 0.85;
+    // A run is not a louder walk, it is a heavier one: the heel arrives first
+    // and the whole corridor gets told about it. This is the mechanic — the
+    // sound the player makes is the sound the building is listening for.
+    const heft = running ? 2.4 : 1;
     this.burst({
-      dur: 0.07 + Math.random() * 0.07,
+      dur: (0.07 + Math.random() * 0.07) * (running ? 1.5 : 1),
       filter: 'bandpass',
-      freq: (soft ? 200 + Math.random() * 180 : 560 + Math.random() * 700) * foot,
+      freq: (soft ? 200 + Math.random() * 180 : 560 + Math.random() * 700) * foot * (running ? 0.8 : 1),
       q: (soft ? 0.7 : 1.4) * (0.85 + Math.random() * 0.4),
-      gain: (soft ? 0.03 : 0.045) * (0.5 + intensity * 0.5) * (0.72 + Math.random() * 0.38),
+      gain: (soft ? 0.03 : 0.045) * heft * (0.5 + intensity * 0.5) * (0.72 + Math.random() * 0.38),
     });
+    if (running) {
+      // the low thump under the heel, which is what carries down a corridor
+      this.burst({ dur: 0.18, filter: 'lowpass', freq: 130, gain: 0.05, attack: 0.004 });
+    }
+  }
+
+  // ------------------------------------------------------ the hand's sounds
+
+  /** a handle turned against a lock that is thirty years past caring */
+  handleRattle() {
+    this.burst({ dur: 0.1, filter: 'bandpass', freq: 1500, q: 5, gain: 0.05 });
+    setTimeout(() => this.burst({ dur: 0.14, filter: 'bandpass', freq: 1150, q: 4, gain: 0.045 }), 110);
+    setTimeout(() => this.burst({ dur: 0.09, filter: 'lowpass', freq: 400, gain: 0.035 }), 220);
+  }
+
+  /** a door being opened, or shut, by a hand that is definitely the player's */
+  doorSwing(opening: boolean) {
+    this.burst({
+      dur: opening ? 1.5 : 0.9,
+      filter: 'lowpass',
+      freq: 300,
+      gain: 0.032,
+      attack: opening ? 0.35 : 0.12,
+    });
+    if (!opening) {
+      setTimeout(() => this.burst({ dur: 0.12, filter: 'lowpass', freq: 220, gain: 0.06 }), 820);
+    }
+  }
+
+  /** three knocks, by the inspector, on a door in front of them */
+  knock() {
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => {
+        this.burst({ dur: 0.11, filter: 'lowpass', freq: 220, gain: 0.1, attack: 0.003 });
+        this.burst({ dur: 0.05, filter: 'bandpass', freq: 1400, q: 3, gain: 0.03 });
+      }, i * 300);
+    }
+  }
+
+  /**
+   * The answer. Same rhythm, from the far side, quieter than the knock that
+   * asked for it — which is the only reason it is bearable. Positional, so on
+   * headphones it comes from the door, or from wherever the building would
+   * rather you looked.
+   */
+  knockBack(pos: THREE.Vector3, delay: number) {
+    if (!this.ctx) return;
+    const panner = this.makePanner(pos);
+    panner.connect(this.bus);
+    for (let i = 0; i < 3; i++) {
+      setTimeout(
+        () => {
+          if (!this.ctx) return;
+          this.burst({ dur: 0.13, filter: 'lowpass', freq: 170, gain: 0.13, attack: 0.006, out: panner });
+        },
+        delay * 1000 + i * 306,
+      );
+    }
+    setTimeout(() => panner.disconnect(), delay * 1000 + 2200);
+    if (this.captions) {
+      setTimeout(() => this.onCaption?.('three knocks — answered'), delay * 1000);
+    }
+  }
+
+  /** lifting a handset off a line that was cut before the player was born */
+  handsetLift() {
+    this.burst({ dur: 0.06, filter: 'bandpass', freq: 1100, q: 4, gain: 0.045 });
+  }
+
+  /**
+   * What is on a dead line at depth. Not a voice — a carrier, and one slow
+   * breath on top of it. It fades out on its own; nothing here is ever cut.
+   */
+  deadLine(interested: boolean) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(interested ? 0.02 : 0.008, t + 0.6);
+    g.gain.setValueAtTime(interested ? 0.02 : 0.008, t + (interested ? 3.4 : 1.2));
+    g.gain.exponentialRampToValueAtTime(0.0002, t + (interested ? 5.2 : 2.0));
+    g.connect(this.master);
+    const o = ctx.createOscillator();
+    o.frequency.value = 61;
+    const hiss = ctx.createBufferSource();
+    hiss.buffer = this.noiseBuf;
+    hiss.loop = true;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'bandpass';
+    hp.frequency.value = 900;
+    hp.Q.value = 0.6;
+    const hg = ctx.createGain();
+    hg.gain.value = 0.35;
+    o.connect(g);
+    hiss.connect(hp).connect(hg).connect(g);
+    o.start(t);
+    hiss.start(t, Math.random());
+    const end = t + (interested ? 5.6 : 2.4);
+    o.stop(end);
+    hiss.stop(end);
+    if (interested) this.breathOnce(2.0, 0.9, this.master);
+  }
+
+  /** one slow breath. Never sharp, never sudden, never quite the player's. */
+  private breathOnce(at: number, level: number, out: AudioNode) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 480;
+    f.Q.value = 0.9;
+    const g = ctx.createGain();
+    const t = ctx.currentTime + at;
+    // in, hold, out — the shape is what makes it a lung and not a noise burst
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.03 * level, t + 0.65);
+    g.gain.linearRampToValueAtTime(0.012 * level, t + 0.95);
+    g.gain.linearRampToValueAtTime(0.026 * level, t + 1.5);
+    g.gain.exponentialRampToValueAtTime(0.0002, t + 2.4);
+    f.frequency.setValueAtTime(360, t);
+    f.frequency.linearRampToValueAtTime(700, t + 0.65);
+    f.frequency.linearRampToValueAtTime(300, t + 2.2);
+    src.connect(f).connect(g).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 2.6);
+  }
+
+  /** a breath that is not the inspector's, from somewhere in the room */
+  breathAt(pos: THREE.Vector3) {
+    if (!this.ctx) return;
+    const panner = this.makePanner(pos);
+    panner.connect(this.bus);
+    this.breathOnce(0, 1.6, panner);
+    setTimeout(() => panner.disconnect(), 3200);
+    if (this.captions) this.onCaption?.('breathing — close');
+  }
+
+  /** every tube on the floor letting go at once. Tubes ring when they die. */
+  lightsDie() {
+    if (!this.ctx) return;
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => {
+        this.burst({ dur: 0.9, filter: 'bandpass', freq: 2400 + Math.random() * 1800, q: 9, gain: 0.035, attack: 0.02 });
+      }, i * 120 + Math.random() * 90);
+    }
+    this.burst({ dur: 2.6, filter: 'lowpass', freq: 90, gain: 0.05, attack: 0.5 });
+    if (this.captions) this.onCaption?.('the fixtures letting go');
+  }
+
+  /** the sound of a floor deciding something, under the audible floor */
+  swell(seconds: number, level = 1) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(31, t);
+    o.frequency.linearRampToValueAtTime(24, t + seconds);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    // long attack, longer release. There is no transient anywhere in here.
+    g.gain.exponentialRampToValueAtTime(0.055 * level, t + seconds * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.0002, t + seconds);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + seconds + 0.2);
   }
 
   pencil() {
@@ -495,7 +737,7 @@ export class AudioEngine {
     return `${far}, ${Math.round(dist)}m`;
   }
 
-  private playOccupancy(kind: 'phone-ring' | 'chair-scrape' | 'knock' | 'below', pos: THREE.Vector3) {
+  private playOccupancy(kind: OccupancyKind, pos: THREE.Vector3) {
     if (!this.ctx) return;
     const ctx = this.ctx;
     const panner = this.makePanner(pos);
@@ -559,6 +801,61 @@ export class AudioEngine {
       }
       void t;
       this.active.push({ panner, stop, pos, until: performance.now() / 1000 + 1.8 });
+    } else if (kind === 'footsteps') {
+      // someone crossing a room and not arriving anywhere. The stride is even.
+      // It never gets closer, which is the part that stays with you.
+      const n = 5 + Math.floor(this.rng() * 5);
+      for (let i = 0; i < n; i++) {
+        setTimeout(() => {
+          if (stopped) return;
+          this.burst({
+            dur: 0.09,
+            filter: 'bandpass',
+            freq: 320 + this.rng() * 260,
+            q: 1.2,
+            gain: 0.11 * (1 - i / (n + 3)),
+            out: panner,
+          });
+        }, i * (540 + this.rng() * 60));
+      }
+      this.active.push({ panner, stop, pos, until: performance.now() / 1000 + n * 0.6 + 0.5 });
+    } else if (kind === 'whisper') {
+      // formant-shaped noise: the shape of speech with none of the content.
+      // If it ever resolved into a word the game would have said something.
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const f1 = ctx.createBiquadFilter();
+      f1.type = 'bandpass';
+      f1.frequency.value = 620;
+      f1.Q.value = 7;
+      const f2 = ctx.createBiquadFilter();
+      f2.type = 'bandpass';
+      f2.frequency.value = 1180;
+      f2.Q.value = 9;
+      const g = ctx.createGain();
+      const t0 = ctx.currentTime;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.05, t0 + 0.5);
+      // the "syllables" are just the formants walking
+      for (let i = 0; i < 9; i++) {
+        const at = t0 + 0.5 + i * 0.31;
+        f1.frequency.linearRampToValueAtTime(430 + this.rng() * 420, at);
+        f2.frequency.linearRampToValueAtTime(950 + this.rng() * 900, at);
+        g.gain.linearRampToValueAtTime(0.018 + this.rng() * 0.038, at);
+      }
+      g.gain.exponentialRampToValueAtTime(0.0002, t0 + 3.9);
+      src.connect(f1).connect(f2).connect(g).connect(panner);
+      src.start(t0, Math.random());
+      src.stop(t0 + 4.1);
+      cleanup.push(() => {
+        try {
+          src.stop();
+        } catch {
+          /* already stopped */
+        }
+      });
+      this.active.push({ panner, stop, pos, until: performance.now() / 1000 + 4.2 });
     } else {
       // 'below': movement on the floor beneath — muffled, unhurried
       this.burst({ dur: 0.5, filter: 'lowpass', freq: 110, gain: 0.2, attack: 0.06, out: panner });

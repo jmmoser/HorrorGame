@@ -32,7 +32,7 @@ export const FLOORS: FloorSpec[] = [
 #I......######......T.#
 #....K..######........#
 #J......######........#
-#.......######.......W#
+#Z......######.......W#
 #######################
 `,
     anchors: {
@@ -58,13 +58,23 @@ export const FLOORS: FloorSpec[] = [
       P: { role: 'light', facing: 's', lit: true },
       u: { role: 'door', facing: 'n' },
       v: { role: 'door', facing: 'n' },
-      d: { role: 'door', facing: 'n', absentWhenNormal: true },
+      // the door that is not on the blueprint is also the one that opens
+      d: { role: 'door', facing: 'n', absentWhenNormal: true, openable: true },
       I: { role: 'shelf', facing: 'e' },
       J: { role: 'shelf', facing: 'e' },
       K: { role: 'cart', facing: 's' },
       V: { role: 'cabinet', facing: 's' },
       T: { role: 'bench', facing: 'w' },
       W: { role: 'plant', facing: 'n' },
+      Z: {
+        role: 'mark',
+        facing: 'n',
+        mark: {
+          lines: ['IT COUNTS', 'THE ONES', 'WHO COUNT'],
+          entry:
+            'South wall of the store room, in something that is not paint: "IT COUNTS THE ONES WHO COUNT." It is not there with the lamp on — the wall is brighter than the writing. I switched off to rest my eyes. That is the only reason this floor has three entries instead of two.',
+        },
+      },
       b: {
         role: 'notice',
         facing: 's',
@@ -130,7 +140,7 @@ export const FLOORS: FloorSpec[] = [
     spawnCount: 4,
     ceilingHeight: 2.5,
     hum: 0.35,
-    occupancy: ['phone-ring'],
+    occupancy: ['phone-ring', 'knock', 'footsteps'],
     stretch: { row: 11, count: 3 },
     schedule: [
       'UNITS 2E–2K · ONE CORRIDOR — 35 METERS',
@@ -145,7 +155,7 @@ export const FLOORS: FloorSpec[] = [
 #..o..#A#######
 #r.....H#######
 #....s#B#######
-#######.#######
+#######X#######
 #m....#C#######
 #t.....I#######
 #..u..#D#######
@@ -171,7 +181,16 @@ export const FLOORS: FloorSpec[] = [
       t: { role: 'desk', facing: 'e' },
       u: { role: 'chair', facing: 'n' },
       B: { role: 'door', facing: 'w', label: '2F' },
-      C: { role: 'door', facing: 'w', label: '2G' },
+      C: { role: 'door', facing: 'w', label: '2G', openable: true },
+      X: {
+        role: 'mark',
+        facing: 'w',
+        mark: {
+          lines: ['DO NOT LET IT', 'HEAR YOU', 'HURRY'],
+          entry:
+            'Corridor wall outside 2G, legible only with the lamp off: "DO NOT LET IT HEAR YOU HURRY." I have been hurrying. I have been hurrying since the stairs were sealed and I found out the elevator only goes down.',
+        },
+      },
       I: { role: 'light', facing: 's', lit: true, flicker: true },
       v: { role: 'shelf', facing: 'e' },
       n: { role: 'phone', facing: 'e' },
@@ -246,7 +265,7 @@ export const FLOORS: FloorSpec[] = [
     spawnCount: 5,
     ceilingHeight: 2.7,
     hum: 0.3,
-    occupancy: ['chair-scrape', 'below'],
+    occupancy: ['chair-scrape', 'below', 'footsteps', 'whisper'],
     schedule: [
       'OPEN PLAN · TWO SOUTH OFFICES',
       'NO LIVE PLANTING · NO TENANTS 30 YRS',
@@ -258,7 +277,7 @@ export const FLOORS: FloorSpec[] = [
 #....L.....M.....N....#
 #..dD.....q.....gh....#
 #k............f.......#
-#......t........u.....#
+#W.....t........u.....#
 #.....................#
 ##.################.###
 #....e................#
@@ -293,6 +312,15 @@ export const FLOORS: FloorSpec[] = [
       V: { role: 'desk', facing: 'n' },
       X: { role: 'chair', facing: 's' },
       z: { role: 'twinroom', facing: 's', absentWhenNormal: true },
+      W: {
+        role: 'mark',
+        facing: 'e',
+        mark: {
+          lines: ['WE ALSO WROTE', 'IT ALL DOWN'],
+          entry:
+            'West wall of the open plan, dark-legible: "WE ALSO WROTE IT ALL DOWN." Beneath it, a column of tally marks in the same hand. I counted four hundred and six and then stopped, because the number was going to keep being a number I could reach.',
+        },
+      },
       e: {
         role: 'notice',
         facing: 's',
@@ -367,7 +395,7 @@ export const FLOORS: FloorSpec[] = [
     spawnCount: 5,
     ceilingHeight: 2.5,
     hum: 0.55,
-    occupancy: ['knock', 'below'],
+    occupancy: ['knock', 'below', 'whisper', 'footsteps'],
     schedule: [
       'ARCHIVE STACKS · ONE CROSS-CORRIDOR',
       'RISERS DRAINED 1996 — NO WATER',
@@ -385,7 +413,7 @@ export const FLOORS: FloorSpec[] = [
 #.n.................#
 #.N....d....P.....O.#
 ###.#####.#####.#####
-#c....##y..x##.....f#
+#c....##y..x##....Rf#
 #......#....#...Q...#
 #g.....#.h..#......e#
 #####################
@@ -402,7 +430,8 @@ export const FLOORS: FloorSpec[] = [
       w: { role: 'sink', facing: 's' },
       b: { role: 'plant', facing: 'w' },
       N: { role: 'light', facing: 's', lit: true },
-      d: { role: 'door', facing: 'n', absentWhenNormal: true },
+      // the door that is not on the blueprint is also the one that opens
+      d: { role: 'door', facing: 'n', absentWhenNormal: true, openable: true },
       P: { role: 'light', facing: 's', lit: false },
       O: { role: 'light', facing: 's', lit: false },
       c: { role: 'shelf', facing: 's' },
@@ -413,6 +442,15 @@ export const FLOORS: FloorSpec[] = [
       g: { role: 'cart', facing: 'e' },
       h: { role: 'chair', facing: 'n' },
       e: { role: 'shelf', facing: 'w' },
+      R: {
+        role: 'mark',
+        facing: 's',
+        mark: {
+          lines: ['THE FILE IS NOT', 'THE FLOOR.', 'THE FILE', 'IS THE FLOOR.'],
+          entry:
+            'Back wall of the southeast stack, only in the dark: "THE FILE IS NOT THE FLOOR. THE FILE IS THE FLOOR." I have written four floors into this ledger. I would like it recorded that at the time of writing them I did not know which way round it went.',
+        },
+      },
       n: {
         role: 'notice',
         facing: 's',
@@ -482,7 +520,7 @@ export const FLOORS: FloorSpec[] = [
     spawnCount: 3,
     ceilingHeight: 2.7,
     hum: 0.2,
-    occupancy: ['below', 'chair-scrape'],
+    occupancy: ['below', 'chair-scrape', 'whisper', 'knock', 'footsteps'],
     schedule: [
       'LOWER LOBBY · SCHEDULE ENDS HERE',
       'FLOOR −05 IS THE LAST FLOOR',
@@ -495,7 +533,7 @@ export const FLOORS: FloorSpec[] = [
 #..a.....b...##
 #....t.......##
 ##.####.####.##
-#..M..#.#..N..#
+#..M..#.#..N.S#
 #w....#.#....q#
 #..c..#.#....k#
 #.....#.#.....#
@@ -518,6 +556,15 @@ export const FLOORS: FloorSpec[] = [
       p: { role: 'footprints', facing: 'n', absentWhenNormal: true },
       d: { role: 'chair', facing: 'n' },
       D: { role: 'chair', facing: 'n' },
+      S: {
+        role: 'mark',
+        facing: 's',
+        mark: {
+          lines: ['SIGN OUT', 'AND SOMETHING', 'SIGNS IN'],
+          entry:
+            'East room, back wall, dark-legible, in a hand I recognize because it is mine: "SIGN OUT AND SOMETHING SIGNS IN." I have not signed anything yet. I am aware that I keep saying yet.',
+        },
+      },
       e: {
         role: 'notice',
         facing: 's',

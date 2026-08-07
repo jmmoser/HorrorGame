@@ -143,6 +143,7 @@ export const WALL_MOUNTED: ReadonlySet<PropRole> = new Set<PropRole>([
   'calendar',
   'sink',
   'notice',
+  'mark',
 ]);
 
 export interface ObstacleAABB {
@@ -243,6 +244,12 @@ export function validateSpec(spec: FloorSpec): string[] {
     if (!cell) continue;
     if (def.role === 'notice' && !def.notice) {
       errors.push(`notice anchor '${ch}' has no notice text`);
+    }
+    if (def.role === 'mark' && !def.mark) {
+      errors.push(`mark anchor '${ch}' has no writing on it`);
+    }
+    if (def.openable && def.role !== 'door') {
+      errors.push(`anchor '${ch}' is openable but is a ${def.role}, not a door`);
     }
     if (WALL_MOUNTED.has(def.role)) {
       const back = opposite(def.facing);

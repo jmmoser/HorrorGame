@@ -394,6 +394,9 @@ export class Pipeline {
         dofStrength: { value: 0 },
         focusDistance: { value: 2 },
         focusRange: { value: 4 },
+        dread: { value: 0 },
+        darkAdapt: { value: 0 },
+        dreadFilm: { value: 0 },
       },
       defines,
     );
@@ -556,6 +559,24 @@ export class Pipeline {
     u.grain.value = on ? 0.055 : 0;
     u.vignette.value = on ? 0.22 : 0.05;
     u.aberration.value = on ? 0.0035 : 0;
+    if (!on) u.dreadFilm.value = 0;
+  }
+
+  /**
+   * How hard the building is holding on, and how far the eye has come in the
+   * inspector's own dark. Both are already smoothed by the time they get
+   * here — the frame's job is only to show them.
+   *
+   * `dread` still moves the vignette and the saturation with film effects
+   * turned off, because it is not a film effect: it is the state of the game.
+   * The grain and the channel split are the parts that stay off.
+   */
+  setMood(dread: number, darkAdapt: number) {
+    const u = this.matComposite.uniforms;
+    const d = Math.max(0, Math.min(1, dread));
+    u.dread.value = d;
+    u.darkAdapt.value = Math.max(0, Math.min(1, darkAdapt));
+    u.dreadFilm.value = this.filmEffects ? d : 0;
   }
 
   // ------------------------------------------------------------------ render

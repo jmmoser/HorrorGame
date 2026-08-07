@@ -165,6 +165,9 @@ export interface Settings {
   haptics: boolean;
   /** print sound events as text — the audio is half the game */
   captions: boolean;
+  /** the occupant. Off leaves every sound it makes and removes the figure —
+   *  for players who want the building without anybody standing in it. */
+  occupant: boolean;
   showFps: boolean;
 }
 
@@ -179,6 +182,7 @@ export const DEFAULT_SETTINGS: Settings = {
   headBob: true,
   haptics: true,
   captions: false,
+  occupant: true,
   showFps: false,
 };
 

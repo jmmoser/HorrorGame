@@ -591,3 +591,45 @@ export function noticeTexture(lines: string[], seed: number): THREE.CanvasTextur
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+/**
+ * Writing that is not there in the light.
+ *
+ * Drawn as a soft luminance on black and shown with additive blending, so the
+ * black contributes nothing and only the strokes reach the frame. The hand is
+ * bad on purpose: uneven baselines, uneven weight, letters that grew as the
+ * writer ran out of wall.
+ */
+export function markTexture(lines: string[], seed: number): THREE.CanvasTexture {
+  const rng = mulberry32(seed ^ 0x5ca12e);
+  const W = 512;
+  const H = 256;
+  const { c, g } = makeCanvas(W, H);
+  g.fillStyle = '#000000';
+  g.fillRect(0, 0, W, H);
+  g.textAlign = 'center';
+  g.shadowColor = 'rgba(150,190,175,0.75)';
+  const step = Math.min(52, (H - 40) / Math.max(1, lines.length));
+  const size = Math.min(40, step * 0.78);
+  const top = H / 2 - ((lines.length - 1) * step) / 2;
+  lines.forEach((line, i) => {
+    g.save();
+    // each line written at its own tilt, by someone not looking at the wall
+    g.translate(W / 2 + (rng() - 0.5) * 26, top + i * step + (rng() - 0.5) * 6);
+    g.rotate((rng() - 0.5) * 0.05);
+    g.font = `${Math.round(size * (0.88 + rng() * 0.24))}px "Courier New", monospace`;
+    g.shadowBlur = 16;
+    g.fillStyle = 'rgba(196,226,214,0.5)';
+    g.fillText(line, 0, 0);
+    g.shadowBlur = 5;
+    g.fillStyle = 'rgba(224,244,236,0.92)';
+    g.fillText(line, 0, 0);
+    g.restore();
+  });
+  g.shadowBlur = 0;
+  // the wall is not clean under it either
+  grain(g, W, H, rng, 0.03, 500);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

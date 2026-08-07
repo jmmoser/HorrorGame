@@ -1,6 +1,21 @@
 // Input: WASD + pointer lock on desktop; left-thumb stick + right-thumb look
 // on mobile, with gyroscope as an additive layer — the building shifts a
 // little when the player physically moves.
+//
+// The inspector has five things they can do and only one of them is the job:
+//
+//   log      click / tap            write it into the ledger
+//   hand     E / HAND button        touch it — try a handle, replace a handset
+//   knock    hold E / hold HAND     the secondary verb on whatever is aimed at
+//   lamp     F / LAMP button        the flashlight is a choice, not a fixture
+//   listen   hold Q / hold LISTEN   stop, and find out what the room is doing
+//   hurry    Shift / stick to rim   faster, louder, and heard
+//
+// Every one of those is available on a phone without a keyboard, because the
+// phone is the target and the desktop is the port.
+
+/** how long the hand button has to be held before it means the second verb */
+export const HAND_HOLD = 0.42;
 
 export class Controls {
   readonly isTouch: boolean;
@@ -17,18 +32,94 @@ export class Controls {
   gyroPitch = 0;
   /** fired on click (locked) or clean tap */
   onInspect: (() => void) | null = null;
+  /** the hand. `secondary` is true when the button was held down. */
+  onHand: ((secondary: boolean) => void) | null = null;
+  /** the flashlight is the player's to switch off */
+  onLamp: (() => void) | null = null;
+  /** held: the inspector has stopped to listen */
+  listening = false;
+  /** held: moving fast, and the building can hear it */
+  hurrying = false;
   enabled = false;
 
   private keys = new Set<string>();
   private canvas: HTMLCanvasElement;
   private gyroBaseB: number | null = null;
   private gyroBaseG: number | null = null;
+  /** performance.now() when the hand went down, or 0 */
+  private handDownAt = 0;
+  /** stick magnitude, for the mobile "push to the rim to hurry" gesture */
+  private stickMag = 0;
+  private rimSince = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.bindTouch();
     else this.bindDesktop();
+    this.bindHandButtons();
+  }
+
+  /** 0..1 — how far into a hold the hand button is, for the HUD ring */
+  get handHold(): number {
+    if (!this.handDownAt) return 0;
+    return Math.min(1, (performance.now() - this.handDownAt) / (HAND_HOLD * 1000));
+  }
+
+  private handDown() {
+    if (!this.enabled || this.handDownAt) return;
+    this.handDownAt = performance.now();
+  }
+
+  private handUp() {
+    if (!this.handDownAt) return;
+    const held = performance.now() - this.handDownAt >= HAND_HOLD * 1000;
+    this.handDownAt = 0;
+    if (this.enabled) this.onHand?.(held);
+  }
+
+  /** the on-screen buttons exist on every device; the phone is just the only
+   *  one that has to use them */
+  private bindHandButtons() {
+    const press = (el: HTMLElement, down: () => void, up: () => void) => {
+      const start = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        down();
+      };
+      const end = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        up();
+      };
+      el.addEventListener('touchstart', start, { passive: false });
+      el.addEventListener('touchend', end);
+      el.addEventListener('touchcancel', end);
+      el.addEventListener('mousedown', start);
+      window.addEventListener('mouseup', () => up());
+    };
+    const hand = document.getElementById('btn-hand');
+    const lamp = document.getElementById('btn-lamp');
+    const listen = document.getElementById('btn-listen');
+    if (hand) press(hand, () => this.handDown(), () => this.handUp());
+    if (listen) {
+      press(
+        listen,
+        () => {
+          if (this.enabled) this.listening = true;
+        },
+        () => {
+          this.listening = false;
+        },
+      );
+    }
+    if (lamp) {
+      lamp.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.enabled) this.onLamp?.();
+      });
+    }
   }
 
   // ------------------------------------------------------------- desktop
@@ -37,14 +128,22 @@ export class Controls {
       if (e.repeat) return;
       this.keys.add(e.code);
       this.updateKeys();
+      if (!this.enabled) return;
+      if (e.code === 'KeyE') this.handDown();
+      if (e.code === 'KeyF') this.onLamp?.();
+      if (e.code === 'KeyQ') this.listening = true;
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
       this.updateKeys();
+      if (e.code === 'KeyE') this.handUp();
+      if (e.code === 'KeyQ') this.listening = false;
     });
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.updateKeys();
+      this.handDownAt = 0;
+      this.listening = false;
     });
     this.canvas.addEventListener('click', () => {
       if (!this.enabled) return;
@@ -67,6 +166,7 @@ export class Controls {
     const y = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     this.move.x = x;
     this.move.y = y;
+    this.hurrying = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
   }
 
   // --------------------------------------------------------------- touch
@@ -107,6 +207,18 @@ export class Controls {
         nub.style.transform = `translate(${dx}px, ${dy}px)`;
         this.move.x = dx / R;
         this.move.y = -dy / R;
+        // pushed hard against the rim and held there: the inspector hurries.
+        // A deliberate, sustained shove — never something a stray thumb does.
+        this.stickMag = Math.hypot(this.move.x, this.move.y);
+        const now = performance.now();
+        if (this.stickMag > 0.94) {
+          if (!this.rimSince) this.rimSince = now;
+          if (now - this.rimSince > 320) this.hurrying = true;
+        } else {
+          this.rimSince = 0;
+          this.hurrying = false;
+        }
+        base.classList.toggle('hurrying', this.hurrying);
       }
       e.preventDefault();
     }, { passive: false });
@@ -117,6 +229,10 @@ export class Controls {
         stickId = -1;
         this.move.x = 0;
         this.move.y = 0;
+        this.stickMag = 0;
+        this.rimSince = 0;
+        this.hurrying = false;
+        base.classList.remove('hurrying');
         base.style.display = 'none';
       }
     };

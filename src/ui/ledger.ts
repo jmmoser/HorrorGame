@@ -98,6 +98,10 @@ export class LedgerUI {
       div.appendChild(body);
       if (e.altered) {
         div.title = 'this is not what I wrote';
+        const cue = document.createElement('div');
+        cue.className = 'entry-cue';
+        cue.textContent = 'this is not what I wrote — tap to amend';
+        div.appendChild(cue);
         div.addEventListener('click', () => this.onAlteredTap?.(e));
       }
       this.entriesEl.appendChild(div);

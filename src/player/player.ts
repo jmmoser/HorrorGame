@@ -3,6 +3,8 @@ import { PLAYER_RADIUS } from '../world/grid';
 import type { Controls } from './controls';
 
 const WALK_SPEED = 3.1; // m/s. purposeful, but still an inspector, not a soldier.
+/** the pace of someone who has decided not to look behind them */
+const RUN_SPEED = 4.9;
 const EYE_HEIGHT = 1.62;
 const RADIUS = PLAYER_RADIUS;
 
@@ -16,8 +18,16 @@ export class Player {
   /** motion-comfort setting — the walk cycle still runs, the camera just
    *  stops riding it (footstep timing must not change) */
   headBob = true;
-  /** callback per footstep with current speed 0..1 */
-  onStep: ((intensity: number) => void) | null = null;
+  /** callback per footstep with current speed 0..1 and whether it was a run */
+  onStep: ((intensity: number, running: boolean) => void) | null = null;
+  /** the game can refuse the hurry — in the car, while documenting */
+  canHurry = true;
+  /**
+   * 0..1. Rises while hurrying, falls slowly afterwards. It is the price of
+   * the run: the inspector's own breathing is the loudest thing in the
+   * building, and the building is quieter than the inspector.
+   */
+  breath = 0;
 
   private vel = new THREE.Vector2(0, 0);
   private bobPhase = 0;
@@ -59,11 +69,18 @@ export class Player {
         my /= len;
       }
     }
+    const wants = Math.hypot(mx, my) > 0.15;
+    const hurrying = this.controls.hurrying && this.canHurry && !this.frozen && wants;
+    this.running = hurrying;
+    // breath comes on faster than it goes; that asymmetry is the whole cost
+    this.breath += ((hurrying ? 1 : 0) - this.breath) * Math.min(1, dt * (hurrying ? 0.42 : 0.2));
+
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
+    const top = hurrying ? RUN_SPEED : WALK_SPEED;
     // forward is -z in camera space
-    const tx = (mx * cos - my * sin) * WALK_SPEED;
-    const tz = (-mx * sin - my * cos) * WALK_SPEED;
+    const tx = (mx * cos - my * sin) * top;
+    const tz = (-mx * sin - my * cos) * top;
     const accel = 10;
     this.vel.x += (tx - this.vel.x) * Math.min(1, accel * dt);
     this.vel.y += (tz - this.vel.y) * Math.min(1, accel * dt);
@@ -94,11 +111,11 @@ export class Player {
     this.stepAccum += Math.hypot(this.vel.x * dt, this.vel.y * dt);
     if (this.stepAccum > this.nextStepAt) {
       this.stepAccum = 0;
-      // strides are never metronome-even
-      this.nextStepAt = 0.84 + Math.random() * 0.18;
-      if (speed > 0.12) this.onStep?.(speed);
+      // strides are never metronome-even; a run shortens them
+      this.nextStepAt = (this.running ? 0.66 : 0.84) + Math.random() * 0.18;
+      if (speed > 0.12) this.onStep?.(speed, this.running);
     }
-    const bobAmp = this.headBob ? 1 : 0;
+    const bobAmp = (this.headBob ? 1 : 0) * (this.running ? 1.7 : 1);
     const bobY = Math.sin(this.bobPhase * Math.PI) * 0.022 * speed * bobAmp;
     const bobX = Math.cos(this.bobPhase * Math.PI * 0.5) * 0.012 * speed * bobAmp;
 
@@ -111,5 +128,13 @@ export class Player {
 
   get speed01(): number {
     return Math.hypot(this.vel.x, this.vel.y) / WALK_SPEED;
+  }
+
+  /** true while the inspector is actually moving at the hurried pace */
+  running = false;
+
+  /** standing still enough to hear anything, which is a precondition for it */
+  get still(): boolean {
+    return this.speed01 < 0.06;
   }
 }
