@@ -8,7 +8,10 @@ import { DEFAULT_SETTINGS, detectTier, type QualityTier, type Settings } from '.
 type Field =
   | { kind: 'choice'; key: keyof Settings; label: string; note?: string; options: Array<{ value: string; label: string }> }
   | { kind: 'toggle'; key: keyof Settings; label: string; note?: string }
-  | { kind: 'range'; key: keyof Settings; label: string; note?: string; min: number; max: number; step: number; format: (v: number) => string };
+  | { kind: 'range'; key: keyof Settings; label: string; note?: string; min: number; max: number; step: number; format: (v: number) => string }
+  /** not a setting — a line of the standing orders, so the inspector can be
+   *  reminded what their hands are for without leaving the building */
+  | { kind: 'note'; label: string; note: string };
 
 interface Section {
   title: string;
@@ -93,6 +96,23 @@ const SECTIONS: Section[] = [
         label: 'sound captions',
         note: 'names what the building does, in text',
       },
+      {
+        kind: 'toggle',
+        key: 'occupant',
+        label: 'the occupant',
+        note: 'something is on the floor with you. off keeps every sound it makes and removes the figure',
+      },
+    ],
+  },
+  {
+    title: 'IV · STANDING ORDERS',
+    fields: [
+      { kind: 'note', label: 'document', note: 'tap · click — hold the frame until the pencil moves' },
+      { kind: 'note', label: 'hand', note: 'HAND · E — try a handle, close a door, replace a handset' },
+      { kind: 'note', label: 'knock', note: 'hold HAND · hold E — and wait. It does not always answer' },
+      { kind: 'note', label: 'lamp', note: 'LAMP · F — off, the eye takes a while, and then the walls have writing on them' },
+      { kind: 'note', label: 'listen', note: 'hold LISTEN · hold Q — stand still. The room gets out of the way' },
+      { kind: 'note', label: 'hurry', note: 'stick to the rim · shift — faster, louder, and heard' },
     ],
   },
 ];
@@ -172,6 +192,15 @@ export class SettingsUI {
     const label = document.createElement('div');
     label.className = 'settings-label';
     label.textContent = field.label;
+    if (field.kind === 'note') {
+      const note = document.createElement('span');
+      note.className = 'settings-note';
+      note.textContent = field.note;
+      label.appendChild(note);
+      row.classList.add('settings-order');
+      row.appendChild(label);
+      return row;
+    }
     if (field.note) {
       const note = document.createElement('span');
       note.className = 'settings-note';

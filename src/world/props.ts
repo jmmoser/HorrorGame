@@ -1,11 +1,19 @@
 import * as THREE from 'three';
-import type { AnchorDef, Palette } from '../core/types';
+import type {
+  AlterationKind,
+  AnchorDef,
+  HandResult,
+  HandVerb,
+  Palette,
+  PropAction,
+} from '../core/types';
 import type { Rng } from '../core/rng';
 import {
   calendarTexture,
   clockFaceTexture,
   doorTexture,
   footprintTexture,
+  markTexture,
   noticeTexture,
   paperTexture,
   phoneDialTexture,
@@ -24,11 +32,22 @@ export interface PropInstance {
   /** invisible raycast target — every prop can be aimed at and logged */
   hit?: THREE.Mesh;
   /** silent post-log floor mutation */
-  applyAlteration?: (kind: 'door-ajar' | 'light-off' | 'light-on' | 'chair-turned') => void;
+  applyAlteration?: (kind: AlterationKind) => void;
   light?: THREE.SpotLight;
   audioKind?: 'dialtone' | 'drip';
   /** current fixture state, kept truthful across alterations */
   lit?: boolean;
+  /** what the hand can do to this right now, primary first. The list is a
+   *  function because a door that is shut and a door that is standing open
+   *  are the same prop and do not offer the same thing. */
+  actions?: () => PropAction[];
+  /** do it. The result is what the game turns into a sound and a record. */
+  act?: (id: HandVerb) => HandResult;
+  /** role 'mark': how visible the writing is, 0..1, driven by the dark */
+  setReveal?: (v: number) => void;
+  /** role 'light': scale the fixture and its glowing panel together, so a
+   *  floor going dark is a fade and never a cut */
+  setDim?: (k: number) => void;
 }
 
 export interface PropContext {
@@ -117,16 +136,29 @@ function buildChair(ctx: PropContext): PropInstance {
     leg.position.set(x, 0.225, z);
     g.add(leg);
   }
-  g.rotation.y = (ctx.rng() - 0.5) * 0.9;
+  const rest = (ctx.rng() - 0.5) * 0.9;
+  g.rotation.y = rest;
   const inner = g;
   const hit = hitbox(0.7, 1.0, 0.7);
   g.add(hit);
+  let turned = false;
   return {
     group: g,
     hit,
     applyAlteration: (kind) => {
       // turned to face the door the player came through — discovered, never seen
-      if (kind === 'chair-turned') inner.rotation.y += Math.PI;
+      if (kind === 'chair-turned') {
+        inner.rotation.y += Math.PI;
+        turned = true;
+      }
+    },
+    actions: () => (turned ? [{ id: 'turn-chair', label: 'turn it back' }] : []),
+    act: (id): HandResult => {
+      if (id !== 'turn-chair' || !turned) return 'none';
+      // putting the room back the way the record says it was. It does not last.
+      inner.rotation.y = rest;
+      turned = false;
+      return 'turned';
     },
   };
 }
@@ -322,14 +354,60 @@ function buildDoor(ctx: PropContext): PropInstance {
   const hit = hitbox(1.1, 2.2, 0.5, 1.05);
   hit.position.z = 0.2;
   g.add(hit);
+
+  // A door has a state and the state is the whole point. Shut is the record.
+  // Ajar is the building. Open is the inspector, and the inspector is the only
+  // one of the three who has to live with it.
+  let swing = 0;
+  let want = 0;
+  const openable = ctx.anchor.openable === true;
+  const setWant = (v: number) => {
+    want = v;
+    if (v > 0.02) voidPlane.visible = true;
+  };
+  const update = (dt: number) => {
+    if (Math.abs(swing - want) < 0.0005) {
+      if (want <= 0.02) voidPlane.visible = false;
+      return;
+    }
+    // slow. every hinge in this building is slow.
+    swing += (want - swing) * Math.min(1, dt * 1.6);
+    slabPivot.rotation.y = -swing * 1.42;
+  };
+
   return {
     group: g,
     hit,
+    update,
     applyAlteration: (kind) => {
-      if (kind === 'door-ajar') {
-        slabPivot.rotation.y = -0.62;
-        voidPlane.visible = true;
+      // alterations only ever land off-screen, so they land finished — there
+      // is no swing to watch and nobody to watch it
+      if (kind !== 'door-ajar') return;
+      setWant(0.44);
+      swing = want;
+      slabPivot.rotation.y = -swing * 1.42;
+    },
+    actions: (): PropAction[] => {
+      const shut = want <= 0.02;
+      const primary: PropAction = shut
+        ? openable
+          ? { id: 'open-door', label: 'open it' }
+          : { id: 'try-handle', label: 'try the handle' }
+        : { id: 'close-door', label: 'close it' };
+      return [primary, { id: 'knock', label: 'knock' }];
+    },
+    act: (id): HandResult => {
+      if (id === 'knock') return 'knocked';
+      if (id === 'close-door') {
+        setWant(0);
+        return 'closed';
       }
+      if (id === 'open-door' && openable) {
+        setWant(1);
+        return 'opened';
+      }
+      if (id === 'try-handle') return 'locked';
+      return 'none';
     },
   };
 }
@@ -506,12 +584,18 @@ function buildLightFixture(ctx: PropContext): PropInstance {
   }
   const hit = hitbox(1.4, 0.8, 0.8, -0.2);
   g.add(hit);
+  const baseIntensity = ctx.palette.lampIntensity * FIXTURE_GAIN;
   const inst: PropInstance = {
     group: g,
     hit,
     light,
     update,
     lit,
+    setDim: (k) => {
+      const c = Math.max(0, Math.min(1, k));
+      light.intensity = baseIntensity * c;
+      (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = PANEL_EMISSIVE * c;
+    },
     applyAlteration: (kind) => {
       if (kind === 'light-off') {
         light.intensity = 0;
@@ -545,6 +629,45 @@ function buildNotice(ctx: PropContext): PropInstance {
   hit.position.z = 0.2;
   g.add(hit);
   return { group: g, hit };
+}
+
+/**
+ * Writing on the wall that the flashlight bleaches out completely.
+ *
+ * Additively blended, so with the beam on there is nothing to see — the
+ * surface behind it is brighter than the ink. Switch the light off, give the
+ * eye twenty seconds, and the building has been talking the whole time.
+ */
+function buildMark(ctx: PropContext): PropInstance {
+  const g = new THREE.Group();
+  const lines = ctx.anchor.mark?.lines ?? ['—'];
+  const material = new THREE.MeshBasicMaterial({
+    map: markTexture(lines, ctx.seed),
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), material);
+  sheet.position.set(0, 1.5, 0.015);
+  sheet.userData.noShadow = true;
+  sheet.visible = false;
+  g.add(sheet);
+  const hit = hitbox(1.6, 1.1, 0.5, 1.5);
+  hit.position.z = 0.22;
+  g.add(hit);
+  return {
+    group: g,
+    hit,
+    setReveal: (v) => {
+      const o = Math.max(0, Math.min(1, v));
+      material.opacity = o * 0.95;
+      // a fully transparent additive quad still costs a draw and still writes
+      // sort order; take it out of the frame entirely when there is nothing
+      sheet.visible = o > 0.004;
+    },
+  };
 }
 
 // ------------------------------------------------------------- desk things
@@ -674,29 +797,65 @@ function buildPhone(ctx: PropContext): PropInstance {
   handset.add(grip, cupL, cupR);
 
   const cordM = mat(0x191713, { roughness: 0.6 });
-  if (ctx.wrong) {
-    // off the hook, laid carefully beside the base. cups facing up.
-    handset.position.set(0.21, 0.032, 0.05);
-    handset.rotation.set(Math.PI, 0.55, 0);
-    phone.add(coiledCord(
+  // the cord is rebuilt whenever the handset moves, because a cord that does
+  // not follow the handset is the one thing here that would read as a bug
+  let cord: THREE.Mesh | null = null;
+  const setCradled = (cradled: boolean) => {
+    if (cradled) {
+      handset.position.set(0, 0.17, -0.04);
+      handset.rotation.set(0, 0, 0);
+    } else {
+      // off the hook, laid carefully beside the base. cups facing up.
+      handset.position.set(0.21, 0.032, 0.05);
+      handset.rotation.set(Math.PI, 0.55, 0);
+    }
+    if (cord) {
+      phone.remove(cord);
+      cord.geometry.dispose();
+    }
+    cord = coiledCord(
       new THREE.Vector3(-0.09, 0.05, -0.04),
-      new THREE.Vector3(0.13, 0.03, 0.03),
+      cradled ? new THREE.Vector3(-0.075, 0.16, -0.04) : new THREE.Vector3(0.13, 0.03, 0.03),
       cordM,
-    ));
-  } else {
-    // resting in the cradle where it has waited for thirty years
-    handset.position.set(0, 0.17, -0.04);
-    phone.add(coiledCord(
-      new THREE.Vector3(-0.09, 0.05, -0.04),
-      new THREE.Vector3(-0.075, 0.16, -0.04),
-      cordM,
-    ));
-  }
+    );
+    cord.castShadow = true;
+    cord.receiveShadow = true;
+    phone.add(cord);
+  };
+  let cradled = !ctx.wrong;
+  setCradled(cradled);
   phone.add(handset);
 
   const hit = hitbox(0.55, 0.5, 0.5, y + 0.1);
   g.add(hit);
-  return { group: g, hit, audioKind: ctx.wrong ? 'dialtone' : undefined };
+  return {
+    group: g,
+    hit,
+    audioKind: ctx.wrong ? 'dialtone' : undefined,
+    applyAlteration: (kind) => {
+      if (kind === 'handset-lifted' && cradled) {
+        cradled = false;
+        setCradled(false);
+      }
+    },
+    actions: (): PropAction[] =>
+      cradled
+        ? [{ id: 'lift-handset', label: 'lift the handset' }]
+        : [{ id: 'replace-handset', label: 'replace the handset' }],
+    act: (id): HandResult => {
+      if (id === 'replace-handset' && !cradled) {
+        cradled = true;
+        setCradled(true);
+        return 'replaced';
+      }
+      if (id === 'lift-handset' && cradled) {
+        // lifted, listened to, and put back the way you put back something
+        // you regret touching. What was on the line is the game's business.
+        return 'lifted';
+      }
+      return 'none';
+    },
+  };
 }
 
 function buildPlant(ctx: PropContext): PropInstance {
@@ -843,6 +1002,7 @@ export function buildProp(ctx: PropContext): PropInstance {
     case 'bench': return buildBench();
     case 'cart': return buildCart();
     case 'notice': return buildNotice(ctx);
+    case 'mark': return buildMark(ctx);
     case 'door': return buildDoor(ctx);
     case 'window': return buildWindow(ctx);
     case 'roomplate': return buildRoomPlate(ctx);

@@ -6,15 +6,34 @@ import {
   makeCollider,
   type ActiveTarget,
   type BuiltFloor,
+  type HandTarget,
+  type MarkTarget,
   type MundaneTarget,
   type NoticeTarget,
 } from './world/builder';
+import type { PropInstance } from './world/props';
 import { fillTokens } from './world/discrepancies';
-import { AMENDMENTS, MUNDANE_TOASTS, MUNDANE_TOAST_WEARY, mundaneEntry } from './world/mundane';
+import {
+  AMENDMENTS,
+  MUNDANE_TOASTS,
+  MUNDANE_TOAST_WEARY,
+  REVISION_AMENDMENT,
+  interpolatedEntry,
+  mundaneEntry,
+  reviseEntry,
+} from './world/mundane';
 import { CS, WALL_H, cellCenter, charAt, facingToYaw, isWalkable } from './world/grid';
 import { setTextureAnisotropy } from './world/textures';
 import { floorRng, hashCombine, mulberry32 } from './core/rng';
-import type { AlterationDef, EntryKind, LedgerEntry, SaveData } from './core/types';
+import { Dread } from './core/dread';
+import type {
+  AlterationKind,
+  EntryKind,
+  HandVerb,
+  LedgerEntry,
+  PropAction,
+  SaveData,
+} from './core/types';
 import { caseNumber, eraseSave, writeSave } from './core/save';
 import { Controls } from './player/controls';
 import { Player } from './player/player';
@@ -34,12 +53,27 @@ type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 const INTERACT_DIST = 5.0;
 /** seconds the inspector spends framing an observation before it is written */
 const DOC_TIME = 1.0;
-/** attention gained per act of documentation — the building reads the ledger */
-const ATTN = { real: 0.1, overQuota: 0.25, amend: 0.2, mundane: 0.07, notice: 0.04 };
-/** crossing these makes the building answer with an alteration of its own */
-const ATTN_THRESHOLDS = [0.3, 0.6];
-
-type AlterationKind = AlterationDef['kind'];
+/**
+ * Attention gained per act. Documenting is the job and costs the least;
+ * touching the building costs more, because a record is a claim about the
+ * floor and a hand is a change to it.
+ */
+const ATTN = {
+  real: 0.1,
+  overQuota: 0.25,
+  amend: 0.2,
+  mundane: 0.07,
+  notice: 0.04,
+  mark: 0.12,
+  hand: 0.06,
+  door: 0.14,
+  knock: 0.22,
+  hurry: 0.02,
+};
+/** crossing these makes the building answer with something of its own */
+const ATTN_THRESHOLDS = [0.3, 0.6, 0.95, 1.4];
+/** seconds in the dark before the eye is any use, and the writing shows */
+const DARK_ADAPT_TIME = 14;
 
 interface PendingAlteration {
   anchor: string;
@@ -60,6 +94,7 @@ type InteractHit =
   | { kind: 'target'; target: ActiveTarget }
   | { kind: 'mundane'; target: MundaneTarget }
   | { kind: 'notice'; target: NoticeTarget }
+  | { kind: 'mark'; target: MarkTarget }
   | { kind: 'amend'; target: AmendTarget }
   | { kind: 'call' }
   | { kind: 'panel' };
@@ -113,6 +148,27 @@ export class Game {
   private contextLost = false;
   private fader = document.getElementById('fader')!;
 
+  // ---- the parts of the inspection nobody files a form for
+  private dread = new Dread();
+  /** the flashlight is the player's to switch off, and switching it off is
+   *  the only way to read half of what is written down here */
+  private lampOn = true;
+  /** 0..1 — how far the eye has come in the inspector's own dark */
+  private darkAdapt = 0;
+  private handTarget: { target: HandTarget; actions: PropAction[] } | null = null;
+  /** anchors the inspector has personally put back the way the record says */
+  private setRight = new Set<string>();
+  /** queued answers to knocks — the building never replies immediately */
+  private answers: Array<{ at: number; pos: THREE.Vector3 }> = [];
+  /** how many entries the building has rewritten this run */
+  private revisions = 0;
+  private lastRevisionAt = -999;
+  /** the presence was in frame; used once per sighting */
+  private sightings = 0;
+  private lastBreathAt = -999;
+  /** somewhere the building would like to be standing, once nobody is looking */
+  private pendingPresence: { pos: THREE.Vector3; until: number } | null = null;
+
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
     this.save = save;
     this.settings = loadSettings();
@@ -153,8 +209,18 @@ export class Game {
     this.pipeline.setShadowSource(this.flashlight);
 
     this.controls.onInspect = () => this.inspect();
-    this.player.onStep = (i) => {
-      if (this.built) this.audio.footstep(i, this.built.spec.palette);
+    this.controls.onHand = (secondary) => this.useHand(secondary);
+    this.controls.onLamp = () => this.toggleLamp();
+    this.player.onStep = (i, running) => {
+      if (!this.built) return;
+      this.audio.footstep(i, this.built.spec.palette, running);
+      // A run is a sound, and a sound is a claim on the building's attention.
+      // This is the whole bargain of the hurry: it is faster and it is heard.
+      if (running) {
+        this.attention += ATTN.hurry;
+        this.dread.bump(0.012);
+        this.audio.setAttention(Math.min(1, this.attention));
+      }
     };
 
     this.hud.onLedgerTab(() => this.toggleLedger());
@@ -165,7 +231,7 @@ export class Game {
         : null;
       await shareCard(this.save.floor, entry, caseNumber(this.save.seed));
     };
-    this.ledgerUI.onAlteredTap = () => this.logLedgerDiscrepancy();
+    this.ledgerUI.onAlteredTap = (entry) => this.logAlteredEntry(entry);
 
     this.audio.onCaption = (text) => this.hud.showCaption(text);
     this.settingsUI.onChange = (s) => this.applySettings(s);
@@ -237,6 +303,12 @@ export class Game {
   }
 
   private applyPlayerSettings() {
+    // turning the occupant off has to take effect on the frame it is turned
+    // off, not on the next floor — that is the entire point of the setting
+    if (!this.settings.occupant) {
+      this.built?.presence.dismiss();
+      this.pendingPresence = null;
+    }
     this.controls.sensitivity = this.settings.lookSensitivity;
     this.controls.invertY = this.settings.invertY;
     this.player.headBob = this.settings.headBob;
@@ -252,6 +324,8 @@ export class Game {
   start() {
     this.controls.enabled = true;
     this.hud.show();
+    // the verb buttons are for thumbs; a keyboard already has E / F / Q
+    this.hud.setVerbsVisible(this.controls.isTouch);
     if (this.controls.isTouch) document.getElementById('touch-ui')!.classList.remove('hidden');
     this.haptics.start();
     this.loadFloor(this.save.floor);
@@ -285,6 +359,18 @@ export class Game {
     this.alteredAnchors = new Set();
     this.amendTargets = [];
     this.mundaneCount = 0;
+    this.handTarget = null;
+    this.setRight = new Set();
+    this.answers = [];
+    this.pendingPresence = null;
+    this.sightings = 0;
+    this.lastBreathAt = -999;
+    // the lamp comes back on between floors: the elevator is the one place
+    // that has ever been on the inspector's side
+    this.lampOn = true;
+    this.darkAdapt = 0;
+    this.hud.setLampOff(false);
+    this.hud.setHandPrompt(null, null);
     if (floorNum > FLOORS.length) {
       this.beginEnding();
       return;
@@ -337,6 +423,9 @@ export class Game {
     for (const n of built.notices) {
       n.logged = this.save.logged.includes(`note-f${spec.floor}-${n.anchor}`);
     }
+    for (const m of built.marks) {
+      m.logged = this.save.logged.includes(`mark-f${spec.floor}-${m.anchor}`);
+    }
     // recompute the building's attention from what was already logged here,
     // replaying any responses it had already made
     this.recomputeAttention(spec.floor, spec.quota);
@@ -353,6 +442,17 @@ export class Game {
     window.setTimeout(() => {
       if (this.built === built) this.hud.showFloorCard(spec.floor, spec.name, spec.schedule);
     }, 1600);
+    // Floor one is the tutorial and is not allowed to say so. Two lines, once
+    // per case, in the inspector's own register — the lamp in particular gates
+    // an entire layer of the building and nothing else would ever teach it.
+    if (spec.floor === 1 && this.save.ledger.length === 0) {
+      const hint = (at: number, text: string) =>
+        window.setTimeout(() => {
+          if (this.built === built && this.state === 'play') this.hud.showToast(text);
+        }, at);
+      hint(26000, 'the hand reaches what the pencil cannot. handles, chairs, handsets.');
+      hint(52000, 'the lamp switches off. some of this building is only there in the dark.');
+    }
     this.depthShown = spec.floor;
     this.haptics.setDepth(spec.floor);
     this.audio.setFloor(spec, spec.floor, floorRng(this.save.seed, spec.floor * 977));
@@ -360,8 +460,12 @@ export class Game {
 
     // floor 5: the ledger has been edited while the inspector was descending
     if (spec.floor === 5 && !this.save.ledgerAltered && this.save.ledger.length > 0) {
+      // the climax needs an entry the inspector definitely wrote: anything the
+      // building has already been at is not evidence of anything any more
+      const own = (e: LedgerEntry) => !e.altered && !e.revisionId && !e.originalText;
       const first =
-        this.save.ledger.find((e) => (e.kind ?? 'discrepancy') === 'discrepancy') ??
+        this.save.ledger.find((e) => (e.kind ?? 'discrepancy') === 'discrepancy' && own(e)) ??
+        this.save.ledger.find(own) ??
         this.save.ledger[0];
       first.originalText = first.text;
       first.altered = true;
@@ -491,6 +595,90 @@ export class Game {
     this.persist();
   }
 
+  /** writing that is only there in the dark, transcribed while it is */
+  private logMark(m: MarkTarget) {
+    if (m.logged || !this.built) return;
+    m.logged = true;
+    const floor = this.built.spec.floor;
+    this.writeEntry(`mark-f${floor}-${m.anchor}`, floor, m.entry, 'notice', m.anchor);
+    this.audio.pencil();
+    this.hud.showToast('transcribed — it was there the whole time');
+    this.hud.pulseTab();
+    // reading what the building wrote is the most attention any single act
+    // in this game buys. It is also the best writing in the building.
+    this.bumpAttention(ATTN.mark);
+    this.dread.bump(0.12);
+    this.persist();
+  }
+
+  /**
+   * The inspector notices the ledger has been edited. This is the one place
+   * the game rewards suspicion of its own UI: re-reading old entries is a
+   * verb, and it pays.
+   */
+  private logAlteredEntry(entry: LedgerEntry) {
+    if (!this.built) return;
+    // the authored floor-5 climax still has its own entry
+    if (!entry.revisionId) {
+      this.logLedgerDiscrepancy();
+      return;
+    }
+    if (this.save.logged.includes(entry.revisionId)) return;
+    entry.altered = false;
+    this.writeEntry(entry.revisionId, this.built.spec.floor, REVISION_AMENDMENT.entry, 'amend');
+    this.audio.pencil();
+    this.hud.showToast(REVISION_AMENDMENT.toast);
+    this.bumpAttention(ATTN.amend);
+    this.dread.bump(0.16);
+    this.persist();
+    if (this.ledgerUI.isOpen) this.openLedger();
+  }
+
+  /**
+   * The building's answer to being written about: it writes back, in the
+   * inspector's hand, in the inspector's own ledger, while the ledger is shut
+   * in the inspector's case. Never while the page is open — the edit is only
+   * ever discovered, like everything else here.
+   */
+  private reviseLedger() {
+    if (this.ledgerUI.isOpen) return;
+    if (this.time - this.lastRevisionAt < 40) return;
+    const rng = mulberry32(
+      hashCombine(this.save.seed, 4409 + this.revisions * 131 + (this.built?.spec.floor ?? 0)),
+    );
+    const candidates = this.save.ledger.filter((e) => {
+      const kind = e.kind ?? 'discrepancy';
+      return !e.altered && !e.revisionId && (kind === 'discrepancy' || kind === 'mundane');
+    });
+    if (candidates.length === 0) return;
+    this.lastRevisionAt = this.time;
+    this.revisions += 1;
+    if (rng() < 0.3) {
+      // Not an edit — an addition. Numbered, dated, in the right handwriting.
+      // It is flagged the same way a rewrite is, because from the inspector's
+      // side there is no difference: this is not what I wrote.
+      const id = `interp-${this.revisions}-${this.save.seed & 0xffff}`;
+      const entry = this.writeEntry(
+        id,
+        this.built?.spec.floor ?? this.save.floor,
+        interpolatedEntry(rng),
+        'discrepancy',
+        undefined,
+        false,
+      );
+      entry.altered = true;
+      entry.revisionId = `rev-${id}`;
+    } else {
+      const victim = candidates[Math.floor(rng() * candidates.length)];
+      victim.originalText = victim.text;
+      victim.text = reviseEntry(victim.text, rng);
+      victim.altered = true;
+      victim.revisionId = `rev-${victim.id}`;
+    }
+    this.hud.pulseTab();
+    this.persist();
+  }
+
   private logAmend(a: AmendTarget) {
     if (a.logged || !this.built) return;
     a.logged = true;
@@ -534,8 +722,91 @@ export class Game {
       this.attnCrossed += 1;
       this.queueAmbientAlteration(this.attnCrossed);
       this.audio.provoke();
+      this.escalate(this.attnCrossed);
     }
     this.audio.setAttention(Math.min(1, this.attention));
+  }
+
+  /**
+   * The building's replies get less like furniture as it goes.
+   *
+   *   1  something is different somewhere. Standard.
+   *   2  it starts standing where you are about to look.
+   *   3  it takes the floor's lights, all at once, slowly, with the sound
+   *      tubes make when they let go. Not a cut — a decision.
+   *   4  it edits the ledger.
+   *
+   * None of these can kill the inspector, because nothing here can. All of
+   * them make the floor harder to finish, and every one of them is something
+   * the player did to themselves by being thorough.
+   */
+  private escalate(level: number) {
+    const built = this.built;
+    if (!built) return;
+    this.dread.bump(0.18 + level * 0.06);
+    if (level === 2) {
+      // it will be somewhere behind them within the minute
+      built.presence.nextSoon(4);
+    } else if (level === 3) {
+      this.audio.swell(9, 1);
+      window.setTimeout(() => this.killTheLights(), 2600);
+    } else if (level >= 4) {
+      this.audio.swell(11, 1);
+      this.reviseLedger();
+      built.presence.nextSoon(8);
+    }
+  }
+
+  /**
+   * Every fixture on the floor lets go together. The intensities are ramped
+   * over a second and a half rather than zeroed, because a hitch and a hard
+   * cut both read as a jump scare and neither is the point: the point is that
+   * the floor is darker now and stays darker, and the flashlight is suddenly
+   * the only thing there is, and switching *that* off was a mechanic you were
+   * using two minutes ago.
+   */
+  private killTheLights() {
+    const built = this.built;
+    if (!built || this.state !== 'play') return;
+    const dying: Array<{ anchor: string; prop: PropInstance }> = [];
+    for (const [letter, prop] of built.props) {
+      if (!prop.light || !prop.lit || !prop.setDim) continue;
+      dying.push({ anchor: letter, prop });
+      // stop the flicker loop fighting the fade, and make the fixture honest
+      // about what it is now so an amendment can be written against it
+      prop.lit = false;
+      this.alteredAnchors.add(letter);
+    }
+    if (dying.length === 0) return;
+    this.audio.lightsDie();
+    const t0 = this.time;
+    let finished = false;
+    built.updatables.push(() => {
+      if (finished) return;
+      const k = Math.min(1, (this.time - t0) / 1.5);
+      for (const d of dying) d.prop.setDim?.(1 - k);
+      if (k >= 1) {
+        finished = true;
+        for (const d of dying) d.prop.applyAlteration?.('light-off');
+        // one of them is left amendable, so the blackout is still worth an
+        // entry. Registering all five would put five identical amendments in
+        // the ledger, and the ledger is the thing this game is protecting.
+        this.applyAlterationNow(dying[0].anchor, 'light-off');
+      }
+    });
+    this.hud.showToast('the floor has gone dark');
+  }
+
+  /** the queued answers to the inspector's knocking, which never come at once */
+  private serviceAnswers() {
+    if (this.answers.length === 0) return;
+    this.answers = this.answers.filter((a) => {
+      if (this.time < a.at) return true;
+      this.audio.knockBack(a.pos, 0);
+      this.dread.bump(0.24);
+      this.haptics.setDread(Math.min(1, this.dread.value));
+      return false;
+    });
   }
 
   /** the building answers documentation with a change of its own — queued
@@ -578,12 +849,14 @@ export class Game {
     const mundane = ids.filter((id) => id.startsWith(`m-f${floor}-`)).length;
     const amends = ids.filter((id) => id.startsWith(`amend-f${floor}-`)).length;
     const notes = ids.filter((id) => id.startsWith(`note-f${floor}-`)).length;
+    const marks = ids.filter((id) => id.startsWith(`mark-f${floor}-`)).length;
     this.attention =
       ATTN.real * Math.min(real, quota) +
       ATTN.overQuota * Math.max(0, real - quota) +
       ATTN.mundane * mundane +
       ATTN.amend * amends +
-      ATTN.notice * notes;
+      ATTN.notice * notes +
+      ATTN.mark * marks;
     while (
       this.attnCrossed < ATTN_THRESHOLDS.length &&
       this.attention >= ATTN_THRESHOLDS[this.attnCrossed]
@@ -615,6 +888,7 @@ export class Game {
     if (hit.kind === 'target') this.logTarget(hit.target);
     else if (hit.kind === 'mundane') this.logMundane(hit.target);
     else if (hit.kind === 'notice') this.logNotice(hit.target);
+    else if (hit.kind === 'mark') this.logMark(hit.target);
     else if (hit.kind === 'amend') this.logAmend(hit.target);
   }
 
@@ -622,7 +896,7 @@ export class Game {
     if (this.state !== 'play' || !this.built || this.ledgerUI.isOpen || this.documenting) return;
     const hit = this.raycastInteract();
     if (!hit) return;
-    if (hit.kind === 'target' || hit.kind === 'mundane' || hit.kind === 'notice' || hit.kind === 'amend') {
+    if (hit.kind !== 'call' && hit.kind !== 'panel') {
       // documentation is an act, not a tap: hold the frame, then the pencil
       this.documenting = { hit, t: 0 };
       this.player.frozen = true;
@@ -647,6 +921,170 @@ export class Game {
     }
   }
 
+  // ------------------------------------------------------------- the lamp
+
+  /**
+   * The flashlight is a choice. Off, the corridor is a rumour and the eye
+   * takes fourteen seconds to become worth anything — and then the walls have
+   * writing on them that the beam was bleaching out the whole time.
+   *
+   * The intensity is ramped rather than set, in `update`: a hard cut to black
+   * is the same event as a hard cut to white, and this game does not make
+   * either of them.
+   */
+  private toggleLamp() {
+    if (this.state !== 'play') return;
+    this.lampOn = !this.lampOn;
+    this.hud.setLampOff(!this.lampOn);
+    this.audio.deadClick();
+    if (this.lampOn) {
+      this.darkAdapt = 0;
+    } else {
+      // switching your own light off in a building that is paying attention
+      this.dread.bump(0.1);
+      this.hud.showToast('lamp off — give it a moment');
+    }
+  }
+
+  // ------------------------------------------------------------- the hand
+
+  /** what the reticle is on, if the hand can do anything to it */
+  private findHandTarget(): { target: HandTarget; actions: PropAction[] } | null {
+    if (!this.built) return null;
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    this.raycaster.far = INTERACT_DIST;
+    const byMesh = new Map<THREE.Mesh, HandTarget>();
+    const meshes: THREE.Mesh[] = [];
+    for (const h of this.built.hands) {
+      meshes.push(h.hit);
+      byMesh.set(h.hit, h);
+    }
+    if (meshes.length === 0) return null;
+    const hits = this.raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) return null;
+    const wallD = this.aimDistance(this.raycaster.ray.origin, this.raycaster.ray.direction);
+    for (const hit of hits) {
+      if (hit.distance > wallD + 0.6) break;
+      const t = byMesh.get(hit.object as THREE.Mesh);
+      if (!t) continue;
+      const actions = t.prop.actions?.() ?? [];
+      if (actions.length > 0) return { target: t, actions };
+    }
+    return null;
+  }
+
+  private useHand(secondary: boolean) {
+    if (this.state !== 'play' || this.ledgerUI.isOpen || this.settingsUI.isOpen) return;
+    const found = this.handTarget;
+    if (!found) return;
+    const action = secondary ? (found.actions[1] ?? found.actions[0]) : found.actions[0];
+    this.performHand(found.target, action.id);
+  }
+
+  private performHand(t: HandTarget, verb: HandVerb) {
+    const result = t.prop.act?.(verb) ?? 'none';
+    if (result === 'none') return;
+    // the reticle's idea of what is possible is a frame stale now
+    this.handTarget = null;
+    switch (result) {
+      case 'locked':
+        this.audio.handleRattle();
+        this.hud.showToast('locked. thirty years locked.');
+        this.bumpAttention(ATTN.hand);
+        this.dread.bump(0.03);
+        break;
+      case 'opened':
+        this.audio.doorSwing(true);
+        this.hud.showToast('open. there is nothing behind it.');
+        this.bumpAttention(ATTN.door);
+        this.dread.bump(0.16);
+        // a door the inspector opened is a door the building can stand in
+        this.offerDoorway(t);
+        break;
+      case 'closed':
+        this.audio.doorSwing(false);
+        this.hud.showToast('shut. as filed.');
+        this.setRight.add(t.anchor);
+        this.bumpAttention(ATTN.hand);
+        break;
+      case 'knocked':
+        this.audio.knock();
+        this.bumpAttention(ATTN.knock);
+        this.dread.bump(0.14);
+        this.maybeAnswer(t.pos);
+        break;
+      case 'turned':
+        this.audio.handleRattle();
+        this.hud.showToast('turned back. as filed.');
+        this.setRight.add(t.anchor);
+        this.bumpAttention(ATTN.hand);
+        break;
+      case 'replaced':
+        this.audio.handsetLift();
+        this.hud.showToast('replaced in the cradle. as filed.');
+        this.setRight.add(t.anchor);
+        this.bumpAttention(ATTN.hand);
+        break;
+      case 'lifted': {
+        // a line cut before the inspector was hired. Usually nothing is on it.
+        this.audio.handsetLift();
+        const interested = this.dread.value > 0.5;
+        window.setTimeout(() => this.audio.deadLine(interested), 260);
+        this.hud.showToast(interested ? 'the line is not dead' : 'dead. as filed.');
+        this.bumpAttention(ATTN.hand);
+        if (interested) this.dread.bump(0.2);
+        break;
+      }
+    }
+    // whatever the inspector puts right, the building has an opinion about
+    if (result === 'closed' || result === 'turned' || result === 'replaced') {
+      this.queueUndo(t);
+    }
+    this.persist();
+  }
+
+  /**
+   * The inspector tidied something. The building will untidy it — off-screen,
+   * through the same machinery as every other alteration — and then it is an
+   * amendment, and the amendment is the best entry in the ledger, and writing
+   * it costs attention. Every loop in this game closes like that.
+   */
+  private queueUndo(t: HandTarget) {
+    const kind: AlterationKind | null =
+      t.role === 'door' ? 'door-ajar'
+      : t.role === 'chair' ? 'chair-turned'
+      : t.role === 'phone' ? 'handset-lifted'
+      : null;
+    if (!kind) return;
+    if (this.pending.some((p) => p.anchor === t.anchor)) return;
+    this.alteredAnchors.delete(t.anchor);
+    this.amendTargets = this.amendTargets.filter((a) => a.anchor !== t.anchor);
+    this.pending.push({ anchor: t.anchor, kind, hiddenFor: 0 });
+  }
+
+  /**
+   * A knock is a question. Whether it gets an answer is the only genuinely
+   * random thing in this building, and the odds are the building's mood.
+   */
+  private maybeAnswer(pos: THREE.Vector3) {
+    const chance = 0.18 + this.dread.value * 0.62;
+    if (Math.random() > chance) return;
+    // never immediately. The pause is what makes it an answer and not an echo.
+    this.answers.push({ at: this.time + 2.2 + Math.random() * 4.5, pos: pos.clone() });
+  }
+
+  /**
+   * An opened door is a place something can be standing when you look back.
+   * Queued, never placed: the whole contract is that it is never seen
+   * arriving, and the inspector is looking straight at the door they just
+   * opened. It waits for them to look away. It is good at waiting.
+   */
+  private offerDoorway(t: HandTarget) {
+    if (this.dread.value < 0.3) return;
+    if (Math.random() > 0.35 + this.dread.value * 0.4) return;
+    this.pendingPresence = { pos: new THREE.Vector3(t.pos.x, 0, t.pos.z), until: this.time + 90 };
+  }
+
   private raycastInteract(): InteractHit | null {
     if (!this.built) return null;
     this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
@@ -655,7 +1093,17 @@ export class Game {
     const targets = new Map<THREE.Mesh, ActiveTarget>();
     const mundanes = new Map<THREE.Mesh, MundaneTarget>();
     const notices = new Map<THREE.Mesh, NoticeTarget>();
+    const marks = new Map<THREE.Mesh, MarkTarget>();
     const amends = new Map<THREE.Mesh, AmendTarget>();
+    // writing that is not currently legible is not currently transcribable —
+    // the inspector cannot copy out what the inspector cannot read
+    if (this.darkAdapt > 0.55) {
+      for (const m of this.built.marks) {
+        if (m.logged) continue;
+        meshes.push(m.hit);
+        marks.set(m.hit, m);
+      }
+    }
     for (const a of this.amendTargets) {
       if (!a.logged) {
         meshes.push(a.hit);
@@ -691,6 +1139,8 @@ export class Game {
       const mesh = h.object as THREE.Mesh;
       const a = amends.get(mesh);
       if (a) return { kind: 'amend', target: a };
+      const k = marks.get(mesh);
+      if (k) return { kind: 'mark', target: k };
       const t = targets.get(mesh);
       if (t) return { kind: 'target', target: t };
       const n = notices.get(mesh);
@@ -960,10 +1410,25 @@ export class Game {
     this.flashTarget.position.lerp(targetPos, Math.min(1, dt * 9));
 
     // auto-dim toward near surfaces so paper at arm's length stays paper,
-    // never a white bloom. iris-like: eases in and out.
+    // never a white bloom. iris-like: eases in and out. A lamp the inspector
+    // has switched off is the same curve with the target at zero — the beam
+    // dies over about half a second, the way a filament does.
     const aim = this.aimDistance(camPos, fwd);
-    const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1);
+    const dimTarget = this.lampOn
+      ? this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1)
+      : 0;
     this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
+
+    // the eye in the inspector's own dark. Slow both ways, and instantly
+    // spent the moment the lamp comes back — which is what makes switching it
+    // off a decision rather than a toggle.
+    if (this.lampOn) {
+      this.darkAdapt = Math.max(0, this.darkAdapt - dt * 1.6);
+    } else if (this.state === 'play') {
+      this.darkAdapt = Math.min(1, this.darkAdapt + dt / DARK_ADAPT_TIME);
+    }
+    for (const m of built.marks) m.prop.setReveal?.(Math.max(0, this.darkAdapt * 1.25 - 0.25));
+    this.dread.setDark(!this.lampOn && this.state === 'play', dt);
 
     // the frame the inspector is holding is the frame that is sharp
     const docT = this.documenting ? Math.min(1, this.documenting.t / DOC_TIME) : 0;
@@ -978,11 +1443,18 @@ export class Game {
     // props
     for (const u of built.updatables) u(dt, this.time);
 
-    // reticle
-    if (this.state === 'play' && !this.ledgerUI.isOpen && !this.settingsUI.isOpen) {
+    // reticle, and what the hand could do to whatever it is on
+    const live = this.state === 'play' && !this.ledgerUI.isOpen && !this.settingsUI.isOpen;
+    if (live) {
       this.hud.setOnTarget(this.raycastInteract() !== null);
+      this.handTarget = this.findHandTarget();
+      const acts = this.handTarget?.actions ?? [];
+      this.hud.setHandPrompt(acts[0]?.label ?? null, acts[1]?.label ?? null);
+      this.hud.setHandHold(this.controls.handHold);
     } else {
       this.hud.setOnTarget(false);
+      this.handTarget = null;
+      this.hud.setHandPrompt(null, null);
     }
 
     // silent alterations: applied only when provably unseen
@@ -1006,9 +1478,36 @@ export class Game {
       });
     }
 
-    // audio
+    // ---- the grip, and the thing that is on this floor with the inspector
     const playerV = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
+    const inCar = this.playerInsideCar();
+    this.dread.setBase(Math.min(1, this.attention), built.spec.floor);
+    if (inCar && built.elevator.doorsClosed) this.dread.relieve(dt);
+    else this.dread.update(dt);
+    this.serviceAnswers();
+    this.updatePresence(dt, playerV, live);
+
+    // documenting is a held frame and a held breath; you cannot hurry through
+    // a doorway you are photographing, and you cannot hurry inside the car
+    this.player.canHurry = this.state === 'play' && !this.documenting && !inCar;
+
+    this.pipeline.setMood(this.dread.value, this.darkAdapt);
+    this.haptics.setDread(this.dread.value);
+    this.hud.setListening(this.audio.listenLevel);
+
+    // past a certain interest the building stops answering with furniture
+    if (this.state === 'play' && this.attention > 0.85 && Math.random() < dt * 0.012) {
+      this.reviseLedger();
+    }
+
+    // audio
     this.audio.updateListener(this.camera, playerV);
+    this.audio.setMood(
+      this.dread.value,
+      this.player.breath,
+      this.controls.listening && this.player.still && this.state === 'play',
+      dt,
+    );
     // stepping into the car swaps the floor's tail for a small metal box; a
     // closed door seals it. The crossfade is what sells the elevator as a room.
     const carness = this.playerInsideCar()
@@ -1037,6 +1536,76 @@ export class Game {
 
     this.hud.setFps(this.pipeline.smoothedFrameMs);
     this.pipeline.render(dt);
+  }
+
+  /**
+   * The occupant, once a frame.
+   *
+   * The frustum is rebuilt here rather than shared with the alteration pass
+   * because the alteration pass only runs when something is queued, and this
+   * has to be right on every frame the building is allowed to move — the one
+   * guarantee the whole thing rests on is that it is never placed or removed
+   * anywhere the camera could have seen it happen.
+   */
+  private updatePresence(dt: number, playerV: THREE.Vector3, live: boolean) {
+    const built = this.built;
+    if (!built) return;
+    this.projScreen.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projScreen);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    fwd.y = 0;
+    fwd.normalize();
+
+    // a doorway the inspector opened, waiting for them to look somewhere else
+    if (this.pendingPresence) {
+      const p = this.pendingPresence;
+      const chest = new THREE.Vector3(p.pos.x, 1.3, p.pos.z);
+      if (this.time > p.until) {
+        this.pendingPresence = null;
+      } else if (!this.frustum.containsPoint(chest) && playerV.distanceTo(chest) > 4) {
+        const yaw = Math.atan2(playerV.x - p.pos.x, playerV.z - p.pos.z) + Math.PI;
+        built.presence.placeAt(p.pos, yaw, 'figure');
+        this.pendingPresence = null;
+      }
+    }
+
+    const event = built.presence.update(dt, {
+      camera: this.camera,
+      frustum: this.frustum,
+      player: playerV,
+      forward: fwd,
+      dread: this.dread.value,
+      // it does not resolve anything behind an open page, or in the car, or
+      // between floors. The elevator is the one honest room in the building.
+      allowed: live && this.settings.occupant && !this.playerInsideCar(),
+    });
+
+    if (event === 'seen') {
+      this.sightings += 1;
+      // the second time is worse than the first, and the building knows it
+      this.dread.bump(0.3 + Math.min(0.25, this.sightings * 0.08));
+      // no sting, ever. A sub-bass swell, long attack, already under the
+      // floor before it was seen — the frame catches up with the sound.
+      this.audio.swell(7 + Math.min(6, this.sightings * 2), 0.8);
+      this.bumpAttention(ATTN.notice);
+      if (this.settings.captions) this.hud.showCaption('someone is standing there');
+    }
+
+    // stopping to listen, in the dark, near it: the one thing it does with
+    // sound. Rationed hard — twice a floor at most, and never twice in a row.
+    const near = built.presence.distanceTo(playerV);
+    if (
+      this.controls.listening &&
+      this.player.still &&
+      near < 11 &&
+      this.time - this.lastBreathAt > 45 &&
+      this.state === 'play'
+    ) {
+      this.lastBreathAt = this.time;
+      const p = new THREE.Vector3(playerV.x, 1.5, playerV.z).addScaledVector(fwd, -1.1);
+      this.audio.breathAt(p);
+      this.dread.bump(0.3);
+    }
   }
 
   private updateEnding(dt: number) {
@@ -1077,6 +1646,39 @@ export class Game {
       logNotice: () => {
         const n = this.built?.notices.find((x) => !x.logged);
         if (n) this.logNotice(n);
+      },
+      logMark: () => {
+        const m = this.built?.marks.find((x) => !x.logged);
+        if (m) this.logMark(m);
+      },
+      marks: () => this.built?.marks.map((m) => ({ anchor: m.anchor, logged: m.logged })) ?? [],
+      hands: () =>
+        this.built?.hands.map((h) => ({
+          anchor: h.anchor,
+          role: h.role,
+          actions: (h.prop.actions?.() ?? []).map((a) => a.id),
+        })) ?? [],
+      hand: (anchor: string, verb: HandVerb) => {
+        const t = this.built?.hands.find((h) => h.anchor === anchor);
+        if (t) this.performHand(t, verb);
+      },
+      setLamp: (on: boolean) => {
+        if (this.lampOn !== on) this.toggleLamp();
+      },
+      setDarkAdapt: (v: number) => {
+        this.darkAdapt = v;
+      },
+      dread: () => this.dread.value,
+      presence: () => this.built?.presence ?? null,
+      summonPresence: () => this.built?.presence.nextSoon(0),
+      escalate: (level: number) => this.escalate(level),
+      reviseLedger: () => {
+        this.lastRevisionAt = -999;
+        this.reviseLedger();
+      },
+      logRevision: () => {
+        const e = this.save.ledger.find((x) => x.altered && x.revisionId);
+        if (e) this.logAlteredEntry(e);
       },
       applyAlteration: (anchor: string, kind: AlterationKind) =>
         this.applyAlterationNow(anchor, kind),

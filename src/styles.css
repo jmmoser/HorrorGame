@@ -732,3 +732,121 @@ body {
   color: var(--red-ink);
   filter: brightness(1.9);
 }
+
+/* ---------- the hand: the verbs that are not the job ---------- */
+/* Aimed-at props announce what the hand can do to them. The prompt is the
+   only place the game ever tells the player anything, so it says as little
+   as possible and disappears the moment the reticle moves off. */
+#hand-prompt {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 2.2rem);
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 0.62rem;
+  letter-spacing: 0.24em;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  /* the beam blows a near wall to white, and the prompt is read against
+     exactly that — so it carries its own dark rather than a text shadow */
+  background: rgba(8, 8, 7, 0.55);
+  padding: 0.32rem 0.7rem 0.3rem;
+  border-bottom: 1px solid rgba(216, 210, 196, 0.22);
+}
+
+#hand-alt {
+  display: block;
+  margin-top: 0.28rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.2em;
+  color: rgba(216, 210, 196, 0.62);
+}
+
+#verbs {
+  position: absolute;
+  right: 0.55rem;
+  bottom: calc(4.2rem + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.verb-btn {
+  width: 3.3rem;
+  height: 3.3rem;
+  border-radius: 50%;
+  background: rgba(18, 17, 15, 0.5);
+  border: 1px solid rgba(120, 114, 98, 0.4);
+  color: rgba(216, 210, 196, 0.6);
+  font: inherit;
+  font-size: 0.45rem;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  touch-action: none;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+
+/* the hold that turns HAND into KNOCK, drawn as the ring filling */
+.verb-btn.holding {
+  color: var(--ink);
+  border-color: rgba(216, 210, 196, 0.85);
+  background: rgba(40, 37, 31, 0.7);
+}
+
+.verb-btn.armed {
+  color: var(--ink);
+  border-color: rgba(180, 172, 150, 0.75);
+}
+
+/* the lamp is off. The whole point of the button is that this is a state you
+   are choosing to be in, and the button has to keep saying so. */
+.verb-btn.off {
+  color: rgba(150, 120, 90, 0.9);
+  border-color: rgba(150, 120, 90, 0.5);
+}
+
+.verb-btn:disabled {
+  opacity: 0.22;
+  cursor: default;
+}
+
+/* stopping to listen: the frame gets quieter too */
+#listen-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 0, 0, 0) 45%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+/* the stick, when it has been shoved to the rim and held there */
+#stick-base.hurrying {
+  border-color: rgba(190, 150, 110, 0.55);
+}
+
+/* an entry the building has been at. The cue is the only instruction the
+   ledger ever gives, and it only appears on entries that need it. */
+.entry-cue {
+  margin-top: 0.4rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  color: var(--red-ink);
+  opacity: 0.75;
+}
+
+/* the standing orders block: text, not controls — no hit area, no hover */
+.settings-row.settings-order {
+  justify-content: flex-start;
+  opacity: 0.85;
+}

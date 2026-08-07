@@ -133,6 +133,94 @@ for (let floor = 1; floor <= 5; floor++) {
     if (bump.moved > 0.7) errors.push('floor 1: player walked through a solid prop');
     if (bump.speed > 0.15) errors.push('floor 1: player still "walking" while blocked by a prop');
     if (bump.steps > 1) errors.push(`floor 1: ${bump.steps} footsteps while blocked by a prop`);
+
+    // the hand: every door offers a verb, and the building takes back
+    // whatever the inspector sets right
+    const hand = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      const doors = d.hands().filter((h) => h.role === 'door');
+      const chair = d.hands().find((h) => h.role === 'chair');
+      d.applyAlteration('A', 'chair-turned');
+      const chairActions = d.hands().find((h) => h.anchor === 'A')?.actions ?? [];
+      d.hand('A', 'turn-chair');
+      const afterTurn = d.hands().find((h) => h.anchor === 'A')?.actions ?? [];
+      d.hand('v', 'knock');
+      return {
+        doors: doors.length,
+        doorVerbs: doors[0]?.actions ?? [],
+        chairFound: !!chair,
+        chairActions,
+        afterTurn,
+      };
+    });
+    console.log(
+      `floor 1 hand: ${hand.doors} doors, verbs=[${hand.doorVerbs.join(', ')}], ` +
+        `turned chair offered [${hand.chairActions.join(', ')}] → [${hand.afterTurn.join(', ')}]`,
+    );
+    if (hand.doors === 0) errors.push('floor 1: no doors offered a hand verb');
+    if (!hand.doorVerbs.includes('knock')) errors.push('floor 1: a door did not offer knock');
+    if (!hand.chairActions.includes('turn-chair')) {
+      errors.push('floor 1: a turned chair did not offer to be turned back');
+    }
+    if (hand.afterTurn.length !== 0) errors.push('floor 1: chair still offers turn-back after being turned back');
+
+    // the lamp, dark adaptation, and the writing that is only there in the dark
+    const dark = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      const before = d.marks();
+      d.setLamp(false);
+      d.setDarkAdapt(1);
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+      d.logMark();
+      const after = d.marks();
+      d.setLamp(true);
+      return {
+        count: before.length,
+        loggedBefore: before.filter((m) => m.logged).length,
+        loggedAfter: after.filter((m) => m.logged).length,
+        kinds: d.save.ledger.map((e) => e.kind ?? 'discrepancy'),
+      };
+    });
+    console.log(`floor 1 dark: ${dark.count} mark(s), transcribed ${dark.loggedBefore} → ${dark.loggedAfter}`);
+    if (dark.count === 0) errors.push('floor 1: no dark-only writing on the floor');
+    if (dark.loggedAfter !== 1) errors.push('floor 1: dark-only writing was not transcribable');
+
+    // the ledger is not safe: the building rewrites an entry, and noticing it
+    // is worth an amendment
+    const revised = await page.evaluate(() => {
+      const d = window.__game.debug;
+      d.reviseLedger();
+      const altered = d.save.ledger.filter((e) => e.altered);
+      const before = d.save.ledger.length;
+      d.logRevision();
+      return {
+        altered: altered.length,
+        text: altered[0]?.text?.slice(0, 70) ?? null,
+        grew: d.save.ledger.length - before,
+      };
+    });
+    console.log(`floor 1 ledger: ${revised.altered} altered, amended=${revised.grew}` +
+      (revised.text ? ` "${revised.text}…"` : ''));
+    if (revised.altered === 0) errors.push('floor 1: the building never rewrote an entry');
+
+    // the occupant: placed only where the camera is not, removed the same way
+    const occ = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      d.summonPresence();
+      const seenAt = [];
+      for (let i = 0; i < 240; i++) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const p = d.presence();
+        if (p?.present) {
+          seenAt.push(p.currentForm);
+          break;
+        }
+      }
+      return { appeared: seenAt.length > 0, form: seenAt[0] ?? null };
+    });
+    console.log(`floor 1 occupant: appeared=${occ.appeared} form=${occ.form}`);
+    if (!occ.appeared) errors.push('floor 1: the occupant never took the floor');
   }
 
   await page.evaluate(() => window.__game.debug.logAllTargets());

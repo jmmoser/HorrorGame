@@ -38,6 +38,8 @@ export type PropRole =
   | 'cart'
   // wall paper — readable, transcribable, never wrong
   | 'notice'
+  // writing that is only there when the flashlight is not
+  | 'mark'
   // wrongable anchors
   | 'door'
   | 'window'
@@ -70,6 +72,37 @@ export interface AnchorDef {
   absentWhenNormal?: boolean;
   /** for role 'notice': the printed lines and the transcription entry */
   notice?: { lines: string[]; entry: string };
+  /** for role 'mark': what is written there, and what the inspector makes of
+   *  it. Only legible with the flashlight off and the eye given time. */
+  mark?: { lines: string[]; entry: string };
+  /** for role 'door': the handle turns. Most of them do not. */
+  openable?: boolean;
+}
+
+/** the verbs the inspector's hand has. Documenting is the job; this is the
+ *  part of the job nobody files a form for. */
+export type HandVerb =
+  | 'open-door'
+  | 'try-handle'
+  | 'knock'
+  | 'close-door'
+  | 'turn-chair'
+  | 'replace-handset'
+  | 'lift-handset';
+
+export type HandResult =
+  | 'opened'
+  | 'locked'
+  | 'knocked'
+  | 'closed'
+  | 'turned'
+  | 'replaced'
+  | 'lifted'
+  | 'none';
+
+export interface PropAction {
+  id: HandVerb;
+  label: string;
 }
 
 export type DiscrepancyType =
@@ -90,10 +123,17 @@ export type DiscrepancyType =
   | 'dripping-sink'
   | 'ledger-altered';
 
+export type AlterationKind =
+  | 'door-ajar'
+  | 'light-off'
+  | 'light-on'
+  | 'chair-turned'
+  | 'handset-lifted';
+
 export interface AlterationDef {
   /** anchor letter of the prop that will silently change */
   anchor: string;
-  kind: 'door-ajar' | 'light-off' | 'light-on' | 'chair-turned';
+  kind: AlterationKind;
 }
 
 export interface DiscrepancyDef {
@@ -110,6 +150,17 @@ export interface DiscrepancyDef {
   /** a change applied to the floor after logging — never on screen */
   alteration?: AlterationDef;
 }
+
+/** the sounds of a building that has been empty for thirty years and is not.
+ *  Every one of them is sourced somewhere the inspector cannot see, and every
+ *  one of them stops if the inspector goes and looks. */
+export type OccupancyKind =
+  | 'phone-ring'
+  | 'chair-scrape'
+  | 'knock'
+  | 'below'
+  | 'footsteps'
+  | 'whisper';
 
 export interface FloorSpec {
   floor: number;
@@ -129,7 +180,7 @@ export interface FloorSpec {
   /** ambience mix 0..1 */
   hum: number;
   /** occupancy sound events on this floor */
-  occupancy: ('phone-ring' | 'chair-scrape' | 'knock' | 'below')[];
+  occupancy: OccupancyKind[];
   ceilingHeight: number;
 }
 
@@ -148,6 +199,8 @@ export interface LedgerEntry {
   /** set true when the building rewrites it */
   altered?: boolean;
   originalText?: string;
+  /** id the amendment gets when the inspector notices the rewrite */
+  revisionId?: string;
 }
 
 export interface SaveData {
