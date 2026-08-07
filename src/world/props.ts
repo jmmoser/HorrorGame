@@ -25,7 +25,7 @@ export interface PropInstance {
   hit?: THREE.Mesh;
   /** silent post-log floor mutation */
   applyAlteration?: (kind: 'door-ajar' | 'light-off' | 'light-on' | 'chair-turned') => void;
-  light?: THREE.PointLight;
+  light?: THREE.SpotLight;
   audioKind?: 'dialtone' | 'drip';
   /** current fixture state, kept truthful across alterations */
   lit?: boolean;
@@ -437,6 +437,32 @@ function buildCalendar(ctx: PropContext): PropInstance {
   return { group: g, hit };
 }
 
+/** ceiling troffers throw *down*, and a downward cone is one shadow map
+ *  instead of a point light's six — so fixtures are spots, aimed at the floor */
+function makeFixtureLight(palette: Palette): THREE.SpotLight {
+  const light = new THREE.SpotLight(
+    palette.lamp,
+    palette.lampIntensity * FIXTURE_GAIN,
+    FIXTURE_RANGE,
+    FIXTURE_ANGLE,
+    0.72,
+    1.7,
+  );
+  light.position.y = -0.14;
+  light.target.position.set(0, -4, 0);
+  light.shadow.bias = -0.0016;
+  light.shadow.normalBias = 0.035;
+  light.shadow.camera.near = 0.25;
+  light.shadow.camera.far = FIXTURE_RANGE;
+  return light;
+}
+
+const FIXTURE_GAIN = 1.55;
+const FIXTURE_RANGE = 13;
+const FIXTURE_ANGLE = 1.26;
+/** emissive has to clear 1.0 in linear space or the tube won't bloom */
+const PANEL_EMISSIVE = 4.2;
+
 function buildLightFixture(ctx: PropContext): PropInstance {
   const g = new THREE.Group();
   const lit = ctx.wrong || ctx.anchor.lit === true;
@@ -449,22 +475,24 @@ function buildLightFixture(ctx: PropContext): PropInstance {
     new THREE.MeshStandardMaterial({
       color: 0x111111,
       emissive: ctx.palette.fixture,
-      emissiveIntensity: lit ? 1.6 : 0.0,
+      emissiveIntensity: lit ? PANEL_EMISSIVE : 0.0,
       roughness: 0.4,
     }),
   );
   panel.rotation.x = Math.PI / 2;
   panel.position.y = -0.055;
+  panel.userData.castShadow = false; // a glowing surface must not cast a hole
   g.add(housing, panel);
-  let light: THREE.PointLight | undefined;
-  if (lit) {
-    light = new THREE.PointLight(ctx.palette.lamp, ctx.palette.lampIntensity, 11, 1.8);
-    light.position.y = -0.4;
-    g.add(light);
-  }
+  // Every fixture carries its light, dark ones included. Adding a light to a
+  // live scene changes three's light counts and recompiles every material on
+  // the floor — a visible hitch. A fixture the building switches on later just
+  // gets its intensity back.
+  const light = makeFixtureLight(ctx.palette);
+  if (!lit) light.intensity = 0;
+  g.add(light, light.target);
   let update: PropInstance['update'];
   if (lit && ctx.anchor.flicker) {
-    const baseI = light!.intensity;
+    const baseI = light.intensity;
     update = (_dt, time) => {
       if (inst.lit === false) return; // altered dark — stay dark
       // irregular fluorescent stutter — never a hard cut to black
@@ -473,7 +501,7 @@ function buildLightFixture(ctx: PropContext): PropInstance {
           ? 0.35 + 0.3 * Math.sin(time * 87)
           : 1;
       light!.intensity = baseI * n;
-      (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6 * n;
+      (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = PANEL_EMISSIVE * n;
     };
   }
   const hit = hitbox(1.4, 0.8, 0.8, -0.2);
@@ -486,19 +514,14 @@ function buildLightFixture(ctx: PropContext): PropInstance {
     lit,
     applyAlteration: (kind) => {
       if (kind === 'light-off') {
-        if (light) light.intensity = 0;
+        light.intensity = 0;
         (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 0;
         inst.update = undefined;
         inst.lit = false;
       }
       if (kind === 'light-on') {
-        if (!light) {
-          light = new THREE.PointLight(ctx.palette.lamp, 0, 11, 1.8);
-          light.position.y = -0.4;
-          g.add(light);
-        }
-        light.intensity = ctx.palette.lampIntensity;
-        (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.6;
+        light.intensity = ctx.palette.lampIntensity * FIXTURE_GAIN;
+        (panel.material as THREE.MeshStandardMaterial).emissiveIntensity = PANEL_EMISSIVE;
         inst.lit = true;
       }
     },

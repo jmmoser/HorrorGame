@@ -4,6 +4,9 @@
 
 export class Controls {
   readonly isTouch: boolean;
+  /** player setting, 1 = the tuned default */
+  sensitivity = 1;
+  invertY = false;
   /** strafe (-1..1), forward (-1..1) */
   move = { x: 0, y: 0 };
   /** accumulated look deltas in px, consumed each frame */

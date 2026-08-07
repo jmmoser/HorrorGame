@@ -1,8 +1,8 @@
 import './styles.css';
 import { Game, devValidate } from './game';
 import { Controls } from './player/controls';
-import { caseNumber, freshSave, loadSave } from './core/save';
-import { inboundShareFloor } from './ui/share';
+import { caseNumber, freshSave, loadSave, parseCaseNumber, saveForSeed } from './core/save';
+import { inboundCase, inboundShareFloor } from './ui/share';
 import { registerSW } from 'virtual:pwa-register';
 
 registerSW({ immediate: true });
@@ -15,6 +15,8 @@ const btnBegin = document.getElementById('btn-begin')!;
 const btnResume = document.getElementById('btn-resume')!;
 
 let game: Game | null = null;
+/** set when the player took someone else's case, or arrived on a case link */
+let assignedSeed: number | null = null;
 
 function showTitle() {
   gate.classList.add('fading');
@@ -38,11 +40,51 @@ function showTitle() {
     v.textContent = `AN INSPECTOR REACHED FLOOR −${String(inbound).padStart(2, '0')} BEFORE YOU.`;
     v.classList.remove('hidden');
   }
+
+  // A share link carries the case, so following one puts you in the same
+  // building rather than merely a building with the same number on it.
+  const linked = inboundCase();
+  const linkedSeed = linked ? parseCaseNumber(linked) : null;
+  if (linkedSeed !== null) {
+    assignedSeed = linkedSeed;
+    const caseEl = document.getElementById('title-case')!;
+    caseEl.textContent = `ASSIGNED — ${caseNumber(linkedSeed)}`;
+    caseEl.classList.remove('hidden');
+    btnBegin.textContent = 'accept assignment';
+  }
+}
+
+function bindCaseEntry() {
+  const toggle = document.getElementById('btn-case')!;
+  const form = document.getElementById('case-form') as HTMLFormElement;
+  const input = document.getElementById('case-input') as HTMLInputElement;
+  const error = document.getElementById('case-error')!;
+
+  toggle.addEventListener('click', () => {
+    toggle.classList.add('hidden');
+    form.classList.remove('hidden');
+    input.focus();
+  });
+  input.addEventListener('input', () => error.classList.add('hidden'));
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const seed = parseCaseNumber(input.value);
+    if (seed === null) {
+      error.classList.remove('hidden');
+      return;
+    }
+    assignedSeed = seed;
+    void begin(false);
+  });
 }
 
 async function begin(resume: boolean) {
   if (game) return;
-  const save = resume ? (loadSave() ?? freshSave()) : freshSave();
+  const save = resume
+    ? (loadSave() ?? freshSave())
+    : assignedSeed !== null
+      ? saveForSeed(assignedSeed)
+      : freshSave();
   game = new Game(canvas, save);
   if (import.meta.env.DEV) {
     (window as unknown as { __game: Game }).__game = game;
@@ -55,6 +97,7 @@ async function begin(resume: boolean) {
   game.start();
 }
 
+bindCaseEntry();
 document.getElementById('gate-continue')!.addEventListener('click', () => {
   // gesture #1: unlock what we can early (some browsers require it here)
   showTitle();

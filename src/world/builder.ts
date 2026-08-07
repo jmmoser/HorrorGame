@@ -21,7 +21,7 @@ import {
   type ObstacleAABB,
 } from './grid';
 import { buildProp, type PropInstance } from './props';
-import { ceilingTexture, floorTexture, puffTexture, wallTexture } from './textures';
+import { ceilingSurface, floorSurface, puffTexture, wallSurface } from './textures';
 import { selectForFloor, type SelectedDiscrepancy } from './discrepancies';
 
 export interface ActiveTarget {
@@ -64,7 +64,60 @@ export interface BuiltFloor {
   obstacles: ObstacleAABB[];
   audioSpots: Array<{ kind: 'dialtone' | 'drip'; pos: THREE.Vector3 }>;
   litPositions: THREE.Vector3[];
+  /** every fixture spot on the floor — the shadow budget and the volumetric
+   *  march both pick from this, nearest first */
+  fixtureLights: THREE.SpotLight[];
   dispose: () => void;
+}
+
+/**
+ * Box UVs restart at every cell, which puts a mip-selection seam on every 2m of
+ * corridor and makes the tiling obvious. Re-project them from world position
+ * instead: horizontal runs read continuously, and v still spans exactly one
+ * wall height so the dado scuff stays at waist level.
+ */
+function projectWallUVs(geo: THREE.BufferGeometry, wallHeight: number) {
+  const pos = geo.getAttribute('position');
+  const nrm = geo.getAttribute('normal');
+  const uv = geo.getAttribute('uv');
+  for (let i = 0; i < pos.count; i++) {
+    const nx = Math.abs(nrm.getX(i));
+    const ny = Math.abs(nrm.getY(i));
+    const nz = Math.abs(nrm.getZ(i));
+    if (ny > nx && ny > nz) {
+      // wall caps, hidden by the floor and ceiling planes — anything will do
+      uv.setXY(i, pos.getX(i) / CS, pos.getZ(i) / CS);
+      continue;
+    }
+    const along = nx > nz ? pos.getZ(i) : pos.getX(i);
+    uv.setXY(i, along / CS, pos.getY(i) / wallHeight);
+  }
+  uv.needsUpdate = true;
+}
+
+/**
+ * Who casts and who receives. Three rules, and they matter:
+ *   - hitboxes are invisible and must stay invisible in the shadow pass
+ *   - the ceiling and the fixtures hang *above* their own light, so casting
+ *     from them would switch the fixture off
+ *   - the floor cannot usefully occlude anything, so it only receives
+ */
+function applyShadowFlags(root: THREE.Object3D) {
+  root.traverse((o) => {
+    if (o instanceof THREE.Sprite) {
+      o.castShadow = false;
+      o.receiveShadow = false;
+      return;
+    }
+    if (!(o instanceof THREE.Mesh)) return;
+    if (o.name === 'hitbox' || o.userData.noShadow === true) {
+      o.castShadow = false;
+      o.receiveShadow = false;
+      return;
+    }
+    o.castShadow = o.userData.castShadow !== false;
+    o.receiveShadow = true;
+  });
 }
 
 // ------------------------------------------------------------ elevator rig
@@ -245,25 +298,46 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const H = spec.ceilingHeight;
 
   // ---- surfaces
-  const wallTex = wallTexture(palette, seed + spec.floor);
-  const floorTex = floorTexture(palette, seed + spec.floor);
-  const ceilTex = ceilingTexture(palette, seed + spec.floor);
-  floorTex.repeat.set(grid.w, grid.h);
-  ceilTex.repeat.set(grid.w / 2, grid.h / 2);
-  disposables.push(wallTex, floorTex, ceilTex);
+  const wallSurf = wallSurface(palette, seed + spec.floor);
+  const floorSurf = floorSurface(palette, seed + spec.floor);
+  const ceilSurf = ceilingSurface(palette, seed + spec.floor);
+  // one texture tile per cell on the floor, per two cells on the ceiling grid
+  for (const t of [floorSurf.map, floorSurf.normalMap, floorSurf.roughnessMap]) {
+    t.repeat.set(grid.w, grid.h);
+  }
+  for (const t of [ceilSurf.map, ceilSurf.normalMap, ceilSurf.roughnessMap]) {
+    t.repeat.set(grid.w / 2, grid.h / 2);
+  }
+  disposables.push(wallSurf, floorSurf, ceilSurf);
 
   const floorMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(grid.w * CS, grid.h * CS),
-    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.96 }),
+    new THREE.MeshStandardMaterial({
+      map: floorSurf.map,
+      normalMap: floorSurf.normalMap,
+      normalScale: new THREE.Vector2(floorSurf.normalScale, floorSurf.normalScale),
+      roughnessMap: floorSurf.roughnessMap,
+      roughness: 1,
+      metalness: 0.02,
+    }),
   );
   floorMesh.rotation.x = -Math.PI / 2;
   floorMesh.position.set((grid.w * CS) / 2, 0, (grid.h * CS) / 2);
+  floorMesh.userData.castShadow = false;
   const ceilMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(grid.w * CS, grid.h * CS),
-    new THREE.MeshStandardMaterial({ map: ceilTex, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({
+      map: ceilSurf.map,
+      normalMap: ceilSurf.normalMap,
+      normalScale: new THREE.Vector2(ceilSurf.normalScale, ceilSurf.normalScale),
+      roughnessMap: ceilSurf.roughnessMap,
+      roughness: 1,
+      metalness: 0.02,
+    }),
   );
   ceilMesh.rotation.x = Math.PI / 2;
   ceilMesh.position.set((grid.w * CS) / 2, H, (grid.h * CS) / 2);
+  ceilMesh.userData.castShadow = false;
   group.add(floorMesh, ceilMesh);
 
   // ---- walls: one merged mesh of boxes for every wall cell that faces air
@@ -283,9 +357,17 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     }
   }
   const wallsGeo = mergeGeometries(wallGeos);
+  projectWallUVs(wallsGeo, H);
   const walls = new THREE.Mesh(
     wallsGeo,
-    new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.94 }),
+    new THREE.MeshStandardMaterial({
+      map: wallSurf.map,
+      normalMap: wallSurf.normalMap,
+      normalScale: new THREE.Vector2(wallSurf.normalScale, wallSurf.normalScale),
+      roughnessMap: wallSurf.roughnessMap,
+      roughness: 1,
+      metalness: 0.02,
+    }),
   );
   group.add(walls);
   disposables.push(wallsGeo);
@@ -299,6 +381,7 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const audioSpots: BuiltFloor['audioSpots'] = [];
   const obstacles: ObstacleAABB[] = [];
   const litPositions: THREE.Vector3[] = [];
+  const fixtureLights: THREE.SpotLight[] = [];
 
   for (const [letter, anchor] of Object.entries(spec.anchors)) {
     const cell = findAnchorCell(rows, letter);
@@ -338,7 +421,10 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     const obstacle = propObstacle(anchor.role, anchor.facing, cx, cz);
     if (obstacle) obstacles.push(obstacle);
     if (prop.update) updatables.push(prop.update);
-    if (prop.light) {
+    // dark fixtures still carry a (zeroed) light so the building can switch
+    // one on later without recompiling the floor — only lit ones get dust
+    if (prop.light) fixtureLights.push(prop.light);
+    if (prop.lit) {
       const p = new THREE.Vector3();
       prop.group.updateMatrixWorld();
       p.setFromMatrixPosition(prop.group.matrixWorld);
@@ -399,6 +485,8 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
   const elevator = new ElevatorRig(grid, H);
   group.add(elevator.group);
 
+  applyShadowFlags(group);
+
   return {
     spec,
     group,
@@ -413,6 +501,7 @@ export function buildFloor(spec: FloorSpec, seed: number): BuiltFloor {
     obstacles,
     audioSpots,
     litPositions,
+    fixtureLights,
     dispose: () => {
       group.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {

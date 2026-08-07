@@ -13,6 +13,9 @@ export class Player {
   yaw = 0;
   pitch = 0;
   frozen = true;
+  /** motion-comfort setting — the walk cycle still runs, the camera just
+   *  stops riding it (footstep timing must not change) */
+  headBob = true;
   /** callback per footstep with current speed 0..1 */
   onStep: ((intensity: number) => void) | null = null;
 
@@ -38,9 +41,9 @@ export class Player {
   update(dt: number, collide: CollideFn) {
     const look = this.controls.consumeLook();
     if (!this.frozen) {
-      const sens = 0.0021;
+      const sens = 0.0021 * this.controls.sensitivity;
       this.yaw -= look.dx * sens;
-      this.pitch -= look.dy * sens;
+      this.pitch -= look.dy * sens * (this.controls.invertY ? -1 : 1);
       this.pitch = Math.max(-1.25, Math.min(1.25, this.pitch));
     }
 
@@ -95,8 +98,9 @@ export class Player {
       this.nextStepAt = 0.84 + Math.random() * 0.18;
       if (speed > 0.12) this.onStep?.(speed);
     }
-    const bobY = Math.sin(this.bobPhase * Math.PI) * 0.022 * speed;
-    const bobX = Math.cos(this.bobPhase * Math.PI * 0.5) * 0.012 * speed;
+    const bobAmp = this.headBob ? 1 : 0;
+    const bobY = Math.sin(this.bobPhase * Math.PI) * 0.022 * speed * bobAmp;
+    const bobX = Math.cos(this.bobPhase * Math.PI * 0.5) * 0.012 * speed * bobAmp;
 
     this.camera.position.set(this.pos.x + bobX * cos, EYE_HEIGHT + bobY, this.pos.y + bobX * sin);
     this.camera.rotation.order = 'YXZ';

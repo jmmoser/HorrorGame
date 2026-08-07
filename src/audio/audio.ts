@@ -9,6 +9,14 @@ import type { Rng } from '../core/rng';
 
 const MASTER_LEVEL = 0.6;
 
+/** caption text per occupancy sound, in the register of the ledger itself */
+const OCCUPANCY_CAPTION: Record<'phone-ring' | 'chair-scrape' | 'knock' | 'below', string> = {
+  'phone-ring': 'a telephone ringing',
+  'chair-scrape': 'a chair dragged across a floor',
+  knock: 'three knocks',
+  below: 'movement',
+};
+
 interface OccupancySource {
   panner: PannerNode;
   stop: () => void;
@@ -16,9 +24,42 @@ interface OccupancySource {
   until: number;
 }
 
+/** How each floor's architecture answers a sound. Seconds of tail, how dark
+ *  the tail is, and whether the space flutters — two parallel hard walls close
+ *  together ring, and a residential corridor is exactly that. */
+interface SpaceProfile {
+  seconds: number;
+  /** low-pass corner of the tail: soft furnishings and paper eat the top */
+  damping: number;
+  /** metres between the reflecting walls, or 0 for no discrete flutter */
+  flutter: number;
+  /** how much of the tail reaches the ear */
+  wet: number;
+}
+
+const SPACES: Record<FloorSpec['palette'], SpaceProfile> = {
+  // partitioned offices: broken up, carpet tiles, nothing rings for long
+  'fluorescent-green': { seconds: 1.1, damping: 2600, flutter: 0, wet: 0.3 },
+  // a long residential corridor between two parallel plaster walls
+  'sodium-orange': { seconds: 1.5, damping: 2000, flutter: 2.4, wet: 0.38 },
+  // open plan, hard floor, glass on one side — the brightest tail here
+  'moonlight-blue': { seconds: 2.0, damping: 4200, flutter: 0, wet: 0.42 },
+  // archive stacks: thirty years of paper is the best absorber in the building
+  'tungsten-dust': { seconds: 0.75, damping: 1400, flutter: 0, wet: 0.24 },
+  // the lower lobby, and whatever the lower lobby opens onto
+  'terminal-white': { seconds: 3.0, damping: 1700, flutter: 0, wet: 0.5 },
+};
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  /** everything sourced in the world goes through here: it is what gets a tail.
+   *  The room tone, hum and drone bypass it — they are already the room. */
+  private bus!: GainNode;
+  private convSpace!: ConvolverNode;
+  private convCar!: ConvolverNode;
+  private wetSpace!: GainNode;
+  private wetCar!: GainNode;
   private humGain!: GainNode;
   private droneGain!: GainNode;
   private roomGain!: GainNode;
@@ -32,6 +73,11 @@ export class AudioEngine {
   /** 0..1 — how interested the building currently is. raises event density. */
   private attn = 0;
   private ducked = false;
+  private masterVolume = 1;
+  /** print sound events as text — the audio carries half the game */
+  captions = false;
+  /** called with a caption whenever a sound the player should notice happens */
+  onCaption: ((text: string) => void) | null = null;
 
   get unlocked(): boolean {
     return this.ctx !== null;
@@ -43,8 +89,23 @@ export class AudioEngine {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = MASTER_LEVEL;
+    this.master.gain.value = MASTER_LEVEL * this.masterVolume;
     this.master.connect(ctx.destination);
+
+    // dry path plus two parallel tails: the floor's space, and the car. The
+    // car is a separate convolver rather than a swapped buffer so stepping in
+    // and out of it can crossfade instead of clicking.
+    this.bus = ctx.createGain();
+    this.bus.connect(this.master);
+    this.convSpace = ctx.createConvolver();
+    this.convCar = ctx.createConvolver();
+    this.convCar.buffer = this.makeImpulse({ seconds: 0.36, damping: 3200, flutter: 1.6, wet: 1 });
+    this.wetSpace = ctx.createGain();
+    this.wetSpace.gain.value = 0.32;
+    this.wetCar = ctx.createGain();
+    this.wetCar.gain.value = 0;
+    this.bus.connect(this.convSpace).connect(this.wetSpace).connect(this.master);
+    this.bus.connect(this.convCar).connect(this.wetCar).connect(this.master);
 
     // shared noise buffer
     const len = ctx.sampleRate * 2;
@@ -101,6 +162,49 @@ export class AudioEngine {
     drone2.start();
   }
 
+  /**
+   * An impulse response as decaying filtered noise, plus — for spaces with two
+   * parallel walls — a handful of discrete early taps at the round-trip time
+   * between them. That flutter is what makes a corridor sound like a corridor
+   * rather than like a plate.
+   */
+  private makeImpulse(p: SpaceProfile): AudioBuffer {
+    const ctx = this.ctx!;
+    const rate = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(rate * p.seconds));
+    const buf = ctx.createBuffer(2, len, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      // one-pole low pass over the noise, so the tail is dark from the start
+      const k = Math.exp((-2 * Math.PI * p.damping) / rate);
+      let last = 0;
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        const env = Math.pow(1 - t, 2.4) * Math.exp(-t * 3.2);
+        last = last * k + (Math.random() * 2 - 1) * (1 - k);
+        d[i] = last * env;
+      }
+      if (p.flutter > 0) {
+        // 343 m/s there and back, decaying, slightly detuned per ear
+        const period = Math.floor(((2 * p.flutter) / 343) * rate * (ch === 0 ? 1 : 1.03));
+        for (let n = 1; n * period < len; n++) {
+          const idx = n * period;
+          d[idx] += Math.pow(0.62, n) * (Math.random() * 0.4 + 0.8) * 0.5;
+        }
+      }
+    }
+    return buf;
+  }
+
+  /** 0 = out on the floor, 1 = sealed in the car */
+  setEnclosure(inCar: number) {
+    if (!this.ctx || !this.floorSpec) return;
+    const p = SPACES[this.floorSpec.palette];
+    const a = Math.max(0, Math.min(1, inCar));
+    this.ramp(this.wetSpace.gain, p.wet * (1 - a), 0.35);
+    this.ramp(this.wetCar.gain, 0.5 * a, 0.35);
+  }
+
   private ramp(param: AudioParam, v: number, t: number) {
     if (!this.ctx) return;
     param.cancelScheduledValues(this.ctx.currentTime);
@@ -118,6 +222,16 @@ export class AudioEngine {
     this.ramp(this.droneGain.gain, Math.min(0.05, 0.004 + depth * 0.006), 6);
     this.nextEventAt = performance.now() / 1000 + 20 + this.rng() * 30;
     this.stopSpots();
+    // the floor's own tail — offices are dead, the lower lobby is not
+    const space = SPACES[spec.palette];
+    this.convSpace.buffer = this.makeImpulse(space);
+    this.ramp(this.wetSpace.gain, space.wet, 0.6);
+    this.ramp(this.wetCar.gain, 0, 0.6);
+  }
+
+  setMasterVolume(v: number) {
+    this.masterVolume = Math.max(0, Math.min(1, v));
+    if (this.ctx) this.ramp(this.master.gain, MASTER_LEVEL * this.masterVolume, 0.25);
   }
 
   /** quiet between floors */
@@ -173,7 +287,7 @@ export class AudioEngine {
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(opts.gain, t + (opts.attack ?? 0.008));
     g.gain.exponentialRampToValueAtTime(0.0004, t + opts.dur);
-    src.connect(f).connect(g).connect(opts.out ?? this.master);
+    src.connect(f).connect(g).connect(opts.out ?? this.bus);
     src.start(t, Math.random() * 1.5);
     src.stop(t + opts.dur + 0.1);
   }
@@ -240,7 +354,7 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.09, t + dur * 0.3);
     g.gain.setValueAtTime(0.09, t + dur * 0.75);
     g.gain.exponentialRampToValueAtTime(0.0004, t + dur);
-    src.connect(lp).connect(g).connect(this.master);
+    src.connect(lp).connect(g).connect(this.bus);
     src.start(t);
     src.stop(t + dur + 0.2);
   }
@@ -274,7 +388,7 @@ export class AudioEngine {
     const ctx = this.ctx;
     for (const s of spots) {
       const panner = this.makePanner(s.pos);
-      panner.connect(this.master);
+      panner.connect(this.bus);
       if (s.kind === 'dialtone') {
         const o1 = ctx.createOscillator();
         o1.frequency.value = 350;
@@ -361,15 +475,31 @@ export class AudioEngine {
       const pos = kind === 'below'
         ? playerPos.clone().add(new THREE.Vector3((this.rng() - 0.5) * 6, -2.6, (this.rng() - 0.5) * 6))
         : pickSpot();
-      if (pos) this.playOccupancy(kind, pos);
+      if (pos) {
+        this.playOccupancy(kind, pos);
+        // captions name the sound and where it came from — never that it is
+        // "behind you", which would be a threat the game does not make
+        if (this.captions) {
+          const dir = kind === 'below' ? 'one floor below' : this.bearing(playerPos, pos);
+          this.onCaption?.(`${OCCUPANCY_CAPTION[kind]} — ${dir}`);
+        }
+      }
     }
+  }
+
+  /** which way a sound came from, in the flat language of a filed report */
+  private bearing(from: THREE.Vector3, to: THREE.Vector3): string {
+    const d = to.clone().sub(from);
+    const dist = Math.hypot(d.x, d.z);
+    const far = dist > 15 ? 'far off' : dist > 8 ? 'some way off' : 'close';
+    return `${far}, ${Math.round(dist)}m`;
   }
 
   private playOccupancy(kind: 'phone-ring' | 'chair-scrape' | 'knock' | 'below', pos: THREE.Vector3) {
     if (!this.ctx) return;
     const ctx = this.ctx;
     const panner = this.makePanner(pos);
-    panner.connect(this.master);
+    panner.connect(this.bus);
     let stopped = false;
     const cleanup: Array<() => void> = [() => panner.disconnect()];
     const stop = () => {

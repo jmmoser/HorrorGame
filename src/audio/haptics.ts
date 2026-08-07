@@ -5,14 +5,16 @@
 export class Haptics {
   private timer: number | null = null;
   private depth = 1;
-  private enabled = 'vibrate' in navigator;
+  private supported = 'vibrate' in navigator;
+  /** player setting; the device still has to support it */
+  enabled = true;
 
   setDepth(depth: number) {
     this.depth = depth;
   }
 
   start() {
-    if (!this.enabled || this.timer !== null) return;
+    if (!this.supported || this.timer !== null) return;
     const beat = () => {
       // 54 bpm at the surface, creeping toward 72 with depth
       const bpm = Math.min(72, 54 + this.depth * 2.2);

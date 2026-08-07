@@ -12,6 +12,7 @@ import {
 import { fillTokens } from './world/discrepancies';
 import { AMENDMENTS, MUNDANE_TOASTS, MUNDANE_TOAST_WEARY, mundaneEntry } from './world/mundane';
 import { CS, WALL_H, cellCenter, charAt, facingToYaw, isWalkable } from './world/grid';
+import { setTextureAnisotropy } from './world/textures';
 import { floorRng, hashCombine, mulberry32 } from './core/rng';
 import type { AlterationDef, EntryKind, LedgerEntry, SaveData } from './core/types';
 import { caseNumber, eraseSave, writeSave } from './core/save';
@@ -19,9 +20,13 @@ import { Controls } from './player/controls';
 import { Player } from './player/player';
 import { AudioEngine } from './audio/audio';
 import { Haptics } from './audio/haptics';
-import { PostFX } from './render/post';
+import { Pipeline } from './render/pipeline';
+import { GRADES } from './render/grades';
+import { assignShadowCasters, gatherVolumetricLights } from './render/lighting';
+import { loadSettings, resolveProfile, saveSettings, type QualityProfile, type Settings } from './render/quality';
 import { Hud } from './ui/hud';
 import { LedgerUI } from './ui/ledger';
+import { SettingsUI } from './ui/settings';
 import { shareCard } from './ui/share';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
@@ -64,16 +69,19 @@ export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
-  private post: PostFX;
+  private pipeline: Pipeline;
   private controls: Controls;
   private player: Player;
   private haptics = new Haptics();
   private hud = new Hud();
   private ledgerUI = new LedgerUI();
+  private settingsUI = new SettingsUI();
   private ambient = new THREE.AmbientLight(0xffffff, 0.5);
   private flashlight = new THREE.SpotLight(0xfff2dc, 0, 20, 0.74, 0.92, 1.15);
   private flashTarget = new THREE.Object3D();
   private flashBase = 40;
+  private settings: Settings;
+  private profile: QualityProfile;
 
   private save: SaveData;
   private built: BuiltFloor | null = null;
@@ -86,6 +94,8 @@ export class Game {
   /** the act of documentation: aim, hold the frame, then the pencil */
   private documenting: { hit: InteractHit; t: number } | null = null;
   private baseFov: number;
+  /** eased 0..1 — how far into the held frame the shallow focus has gone */
+  private docFocus = 0;
   /** per-floor: how much the building has noticed the documentation */
   private attention = 0;
   private attnCrossed = 0;
@@ -100,23 +110,32 @@ export class Game {
   private insideCarSince = 0;
   private endingTimer = 0;
   private lastSaveWrite = 0;
+  private contextLost = false;
   private fader = document.getElementById('fader')!;
 
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
     this.save = save;
+    this.settings = loadSettings();
+    this.profile = resolveProfile(this.settings);
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      // AA is the scene buffer's job now (MSAA where the tier affords it)
+      antialias: false,
       powerPreference: 'high-performance',
     });
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.5;
+
+    // grazing angles are the default view down a corridor; take all the
+    // anisotropic filtering the device will give
+    setTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
     this.controls = new Controls(canvas);
     this.camera = new THREE.PerspectiveCamera(this.controls.isTouch ? 73 : 68, 1, 0.05, 60);
     this.baseFov = this.camera.fov;
     this.player = new Player(this.camera, this.controls);
-    this.post = new PostFX(this.renderer, this.scene, this.camera);
+    this.pipeline = new Pipeline(this.renderer, this.scene, this.camera, this.profile);
+    this.pipeline.adaptive = this.settings.adaptiveResolution;
+    this.pipeline.setFilmEffects(this.settings.filmEffects);
+    this.applyPlayerSettings();
     this.resize();
     window.addEventListener('resize', () => this.resize());
 
@@ -124,6 +143,14 @@ export class Game {
     this.scene.add(this.flashlight);
     this.scene.add(this.flashTarget);
     this.flashlight.target = this.flashTarget;
+    // the beam the player aims is the one whose shadow they will notice
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(this.profile.shadowMapSize, this.profile.shadowMapSize);
+    this.flashlight.shadow.camera.near = 0.2;
+    this.flashlight.shadow.camera.far = 22;
+    this.flashlight.shadow.bias = -0.0012;
+    this.flashlight.shadow.normalBias = 0.03;
+    this.pipeline.setShadowSource(this.flashlight);
 
     this.controls.onInspect = () => this.inspect();
     this.player.onStep = (i) => {
@@ -140,21 +167,84 @@ export class Game {
     };
     this.ledgerUI.onAlteredTap = () => this.logLedgerDiscrepancy();
 
+    this.audio.onCaption = (text) => this.hud.showCaption(text);
+    this.settingsUI.onChange = (s) => this.applySettings(s);
+    this.settingsUI.onClose = () => this.toggleSettings();
+    document.getElementById('settings-btn')!.addEventListener('click', () => this.toggleSettings());
+    window.addEventListener('keydown', (e) => {
+      // Escape is the pause key everywhere; it also backs out of the ledger
+      if (e.key !== 'Escape') return;
+      if (this.ledgerUI.isOpen) this.toggleLedger();
+      else this.toggleSettings();
+    });
+
     window.addEventListener('visibilitychange', () => {
       if (document.hidden) this.persist();
     });
     window.addEventListener('pagehide', () => this.persist());
+
+    // A backgrounded PWA or a driver reset can take the GL context away.
+    // Without preventDefault the browser never offers it back, and without a
+    // rebuild the inspector comes back to a black corridor.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      this.persist();
+      this.setFade(true, true);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.pipeline.rebuildAfterContextLoss();
+      setTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
+      this.resize();
+      // three re-uploads textures and geometry itself, but the floor's canvas
+      // sources and shadow maps are cleanest to rebuild from the save
+      if (this.state !== 'ending') this.loadFloor(this.save.floor);
+    });
   }
 
   private resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.controls.isTouch ? 1.75 : 2);
-    this.renderer.setPixelRatio(pr);
-    this.renderer.setSize(w, h);
-    this.post.setSize(w * pr, h * pr);
+    this.pipeline.setSize(w, h, window.devicePixelRatio || 1);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  // ------------------------------------------------------------- settings
+
+  get currentSettings(): Settings {
+    return { ...this.settings };
+  }
+
+  applySettings(next: Settings) {
+    const qualityChanged = next.quality !== this.settings.quality;
+    this.settings = { ...next };
+    saveSettings(this.settings);
+
+    if (qualityChanged) {
+      this.profile = resolveProfile(this.settings);
+      this.pipeline.setProfile(this.profile);
+      this.flashlight.shadow.mapSize.set(this.profile.shadowMapSize, this.profile.shadowMapSize);
+      this.flashlight.shadow.map?.dispose();
+      this.flashlight.shadow.map = null;
+      if (this.built) assignShadowCasters(this.built.fixtureLights, this.profile);
+      this.resize();
+    }
+    this.pipeline.adaptive = this.settings.adaptiveResolution;
+    this.pipeline.setFilmEffects(this.settings.filmEffects);
+    this.applyPlayerSettings();
+  }
+
+  private applyPlayerSettings() {
+    this.controls.sensitivity = this.settings.lookSensitivity;
+    this.controls.invertY = this.settings.invertY;
+    this.player.headBob = this.settings.headBob;
+    this.audio.setMasterVolume(this.settings.masterVolume);
+    this.audio.captions = this.settings.captions;
+    this.haptics.enabled = this.settings.haptics;
+    this.baseFov = (this.controls.isTouch ? 73 : 68) + this.settings.fovOffset;
+    this.hud.setFpsVisible(this.settings.showFps);
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -168,7 +258,8 @@ export class Game {
     const loop = (last: number) => {
       requestAnimationFrame((now) => {
         const dt = Math.min(0.05, (now - last) / 1000);
-        this.update(dt);
+        // nothing to draw into, and every GL call would throw
+        if (!this.contextLost) this.update(dt);
         loop(now);
       });
     };
@@ -203,12 +294,20 @@ export class Game {
     const built = buildFloor(spec, this.save.seed);
     this.built = built;
     this.scene.add(built.group);
-    this.scene.fog = new THREE.FogExp2(palette.fog, palette.fogDensity);
+    // volumetric in-scattering now supplies most of the near-field haze, so the
+    // exponential fog steps back to being a draw-distance fade
+    this.scene.fog = new THREE.FogExp2(
+      palette.fog,
+      palette.fogDensity * (this.profile.volumetrics ? 0.6 : 1),
+    );
     this.scene.background = new THREE.Color(palette.fog);
     this.ambient.color.set(palette.ambient);
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
     this.flashlight.intensity = this.flashBase;
+    this.pipeline.setGrade(GRADES[spec.palette]);
+    this.pipeline.setCeilingHeight(spec.ceilingHeight);
+    assignShadowCasters(built.fixtureLights, this.profile);
     this.collide = makeCollider(built);
 
     // walkable centers for occupancy sound placement
@@ -495,11 +594,21 @@ export class Game {
     this.audio.setAttention(Math.min(1, this.attention));
   }
 
+  /** the inspector walks only while playing, with nothing open over the world */
+  private canMove(): boolean {
+    return (
+      this.state === 'play' &&
+      !this.ledgerUI.isOpen &&
+      !this.settingsUI.isOpen &&
+      this.documenting === null
+    );
+  }
+
   private cancelDocumenting() {
     if (!this.documenting) return;
     this.documenting = null;
     this.hud.setDocProgress(null);
-    if (this.state === 'play' && !this.ledgerUI.isOpen) this.player.frozen = false;
+    this.player.frozen = !this.canMove();
   }
 
   private commitDocumenting(hit: InteractHit) {
@@ -720,10 +829,25 @@ export class Game {
 
   // ---------------------------------------------------------------- ledger
 
+  private toggleSettings() {
+    if (this.settingsUI.isOpen) {
+      this.settingsUI.close();
+      this.controls.enabled = true;
+      this.player.frozen = !this.canMove();
+    } else if (this.state === 'play' || this.state === 'arriving') {
+      this.cancelDocumenting();
+      if (this.ledgerUI.isOpen) this.ledgerUI.close();
+      this.settingsUI.open(this.settings);
+      // the pointer belongs to the form while the form is open
+      this.controls.enabled = false;
+      this.player.frozen = true;
+    }
+  }
+
   private toggleLedger() {
     if (this.ledgerUI.isOpen) {
       this.ledgerUI.close();
-      this.player.frozen = this.state !== 'play';
+      this.player.frozen = !this.canMove();
     } else if (this.state === 'play' || this.state === 'arriving') {
       this.openLedger();
     }
@@ -754,7 +878,7 @@ export class Game {
     const built = this.built;
     if (!built) {
       if (this.state === 'ending') this.updateEnding(dt);
-      this.post.render(dt);
+      this.pipeline.render(dt);
       return;
     }
 
@@ -765,11 +889,11 @@ export class Game {
     if (this.state === 'arriving') {
       if (this.stateT > 1.6) {
         this.state = 'play';
-        this.player.frozen = this.ledgerUI.isOpen;
+        this.player.frozen = !this.canMove();
       }
     } else if (this.state === 'play') {
       this.save.elapsed += dt;
-      if (!this.ledgerUI.isOpen && !this.documenting) this.player.frozen = false;
+      this.player.frozen = !this.canMove();
 
       // the act of documentation: hold the frame until the pencil moves
       if (this.documenting) {
@@ -780,7 +904,7 @@ export class Game {
           this.documenting = null;
           this.hud.setDocProgress(null);
           this.commitDocumenting(hit);
-          if (!this.ledgerUI.isOpen) this.player.frozen = false;
+          this.player.frozen = !this.canMove();
         }
       }
 
@@ -841,11 +965,21 @@ export class Game {
     const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1);
     this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
 
+    // the frame the inspector is holding is the frame that is sharp
+    const docT = this.documenting ? Math.min(1, this.documenting.t / DOC_TIME) : 0;
+    this.docFocus += (docT - this.docFocus) * Math.min(1, dt * 5);
+    this.pipeline.setDof(this.docFocus * 0.85, Math.max(0.8, aim), 1.4);
+
+    // light the dust: the flashlight first, then whatever fixtures are near
+    this.pipeline.setVolumetricLights(
+      gatherVolumetricLights(this.flashlight, built.fixtureLights, camPos, this.profile),
+    );
+
     // props
     for (const u of built.updatables) u(dt, this.time);
 
     // reticle
-    if (this.state === 'play' && !this.ledgerUI.isOpen) {
+    if (this.state === 'play' && !this.ledgerUI.isOpen && !this.settingsUI.isOpen) {
       this.hud.setOnTarget(this.raycastInteract() !== null);
     } else {
       this.hud.setOnTarget(false);
@@ -875,6 +1009,14 @@ export class Game {
     // audio
     const playerV = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
     this.audio.updateListener(this.camera, playerV);
+    // stepping into the car swaps the floor's tail for a small metal box; a
+    // closed door seals it. The crossfade is what sells the elevator as a room.
+    const carness = this.playerInsideCar()
+      ? built.elevator.doorsClosed
+        ? 1
+        : 0.6
+      : Math.max(0, 1 - (this.distToCar() - 1.2) / 2.2);
+    this.audio.setEnclosure(carness);
     if (this.state === 'play') {
       this.audio.tick(playerV, () => {
         // an interested building lets its sounds come closer
@@ -893,7 +1035,8 @@ export class Game {
       this.persist();
     }
 
-    this.post.render(dt);
+    this.hud.setFps(this.pipeline.smoothedFrameMs);
+    this.pipeline.render(dt);
   }
 
   private updateEnding(dt: number) {
@@ -942,6 +1085,28 @@ export class Game {
         if (a) this.logAmend(a);
       },
       attention: () => this.attention,
+      pipeline: this.pipeline,
+      volSample: () => {
+        const ls = gatherVolumetricLights(
+          this.flashlight,
+          this.built?.fixtureLights ?? [],
+          this.camera.position,
+          this.profile,
+        );
+        return ls.map((l) => ({
+          pos: l.position.toArray().map((n) => +n.toFixed(2)),
+          col: l.color.toArray().map((n) => +n.toFixed(4)),
+          range: l.range,
+          cos: [+l.cosOuter.toFixed(3), +l.cosInner.toFixed(3)],
+        }));
+      },
+      setDebugView: (v: 'none' | 'ao' | 'vol' | 'bloom' | 'depth' | 'scene', gain = 1) => {
+        this.pipeline.debugView = v;
+        this.pipeline.debugGain = gain;
+      },
+      setVolShadow: (on: boolean) => {
+        this.pipeline.debugNoVolShadow = !on;
+      },
       amendTargets: () => this.amendTargets,
       depart: () => {
         if (this.built) {

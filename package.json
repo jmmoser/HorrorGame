@@ -14,7 +14,8 @@
     "validate": "tsx scripts/validate-floors.ts",
     "smoke": "node scripts/smoke.mjs",
     "preview": "vite preview",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "shots": "node scripts/shots.mjs"
   },
   "dependencies": {
     "three": "^0.185.1"

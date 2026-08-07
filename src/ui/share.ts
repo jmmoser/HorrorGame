@@ -83,12 +83,16 @@ function drawCard(floor: number, entry: LedgerEntry | null, caseNum?: string): H
   g.fillText('the elevator only goes down', 540, 1250);
   g.font = '24px "Courier New", monospace';
   g.fillStyle = 'rgba(216,210,196,0.5)';
-  g.fillText(shareUrl(floor).replace(/^https?:\/\//, ''), 540, 1300);
+  g.fillText(shareUrl(floor, caseNum).replace(/^https?:\/\//, ''), 540, 1300);
   return c;
 }
 
-export function shareUrl(floor: number): string {
-  return `${location.origin}${location.pathname}?f=${floor}`;
+export function shareUrl(floor: number, caseNum?: string): string {
+  const base = `${location.origin}${location.pathname}?f=${floor}`;
+  // carry the case on the link, so "compare notes" means the same building and
+  // not just the same number of floors
+  const code = caseNum?.replace(/^CASE\s*S7-/i, '');
+  return code ? `${base}&c=${code}` : base;
 }
 
 export async function shareCard(
@@ -107,7 +111,7 @@ export async function shareCard(
       await nav.share({
         files: [file],
         title: 'The Descent Ledger',
-        text: `Floor −${String(floor).padStart(2, '0')}. The elevator only goes down. ${shareUrl(floor)}`,
+        text: `Floor −${String(floor).padStart(2, '0')}. The elevator only goes down. ${shareUrl(floor, caseNum)}`,
       });
       return 'shared';
     } catch {
@@ -120,11 +124,16 @@ export async function shareCard(
   a.click();
   URL.revokeObjectURL(a.href);
   try {
-    await navigator.clipboard.writeText(shareUrl(floor));
+    await navigator.clipboard.writeText(shareUrl(floor, caseNum));
   } catch {
     /* clipboard denied — the download is enough */
   }
   return 'downloaded';
+}
+
+/** the case number on an inbound share link, if any */
+export function inboundCase(): string | null {
+  return new URLSearchParams(location.search).get('c');
 }
 
 /** floor number from an inbound share link, if any */
