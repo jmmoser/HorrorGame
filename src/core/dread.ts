@@ -147,8 +147,8 @@ const ZERO: DreadFrame = {
 
 /** weight, and the minimum seconds before the same thing may happen again */
 const SCARES: Array<{ kind: ScareKind; weight: number; cooldown: number; minIntensity: number }> = [
-  { kind: 'face', weight: 16, cooldown: 5, minIntensity: 0 },
-  { kind: 'face-hold', weight: 7, cooldown: 26, minIntensity: 0.45 },
+  { kind: 'face', weight: 11, cooldown: 12, minIntensity: 0 },
+  { kind: 'face-hold', weight: 7, cooldown: 42, minIntensity: 0.45 },
   { kind: 'static', weight: 9, cooldown: 7, minIntensity: 0 },
   { kind: 'whisper', weight: 14, cooldown: 8, minIntensity: 0 },
   { kind: 'scream', weight: 10, cooldown: 15, minIntensity: 0.25 },
@@ -162,7 +162,7 @@ const SCARES: Array<{ kind: ScareKind; weight: number; cooldown: number; minInte
   // the quiet half. none of these announce themselves, and between them they
   // are the reason the loud half still works on the fourth floor.
   { kind: 'follow', weight: 13, cooldown: 16, minIntensity: 0.1 },
-  { kind: 'stare', weight: 12, cooldown: 24, minIntensity: 0.2 },
+  { kind: 'stare', weight: 12, cooldown: 36, minIntensity: 0.2 },
   { kind: 'observed', weight: 10, cooldown: 34, minIntensity: 0.18 },
   { kind: 'closer', weight: 9, cooldown: 20, minIntensity: 0.12 },
 ];
@@ -292,13 +292,17 @@ export class Dread {
     const near = Number.isFinite(ctx.presenceDistance)
       ? Math.max(0, 1 - ctx.presenceDistance / 16)
       : 0;
+    // `near` is deliberately modest: proximity feeding intensity feeding
+    // shorter timers feeding proximity is the loop that once kept the figure
+    // permanently in the inspector's face, and a monster with no absences is
+    // wallpaper.
     const raw =
       tune.floorIntensity +
       depth * 0.22 +
       ctx.attention * 0.26 +
       settle * 0.14 +
-      near * 0.42 +
-      (ctx.presenceVisible ? 0.16 : 0) +
+      near * 0.28 +
+      (ctx.presenceVisible ? 0.12 : 0) +
       (ctx.speed < 0.05 ? 0.06 : 0);
     this.intensity = Math.max(0, Math.min(1, raw)) * tune.scale;
 
