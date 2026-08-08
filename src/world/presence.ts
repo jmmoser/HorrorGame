@@ -10,6 +10,15 @@ import { faceTexture, FACE_KINDS } from './faces';
 // while you are looking at it, it is closer every time you look away, and once
 // it is close enough it stops obeying any of that.
 //
+// Three things were added when the building stopped being polite about it.
+// It no longer walks at where you are; it walks at where you are going to be,
+// which is why corners stopped working. When it moves unseen it can choose the
+// one bearing you are not covering rather than merely a nearer one, so the
+// scare is the turn you took yourself. And when you stop to document something
+// it stops too, and raises its hands to the same height as yours, and holds
+// them there, because whatever else it is doing on this floor it is also
+// keeping a record.
+//
 // It never kills you. There is still no game over. What it does instead is
 // arrive.
 
@@ -28,6 +37,10 @@ export interface PresenceContext {
   pickCell: (min: number, max: number) => THREE.Vector3 | null;
   /** 0..1 — how far gone this floor is */
   intensity: number;
+  /** the inspector's velocity on the floor plane, m/s — it aims at this */
+  playerVel: { x: number; z: number };
+  /** true while the inspector is holding a frame. it holds one too. */
+  documenting: boolean;
 }
 
 const HEIGHT = 2.34;
@@ -63,6 +76,10 @@ export class Presence {
   private lastDistance = Infinity;
   private yaw = 0;
   private stride = 0;
+  /** 0..1 eased — how far into copying the inspector's pose it currently is */
+  private mimic = 0;
+  /** the floor's intensity as of the last frame, for decisions made outside it */
+  private lastI = 0;
   /** suppressed entirely — the comfort setting, or between floors */
   enabled = true;
 
@@ -186,6 +203,7 @@ export class Presence {
 
     this.stateT += dt;
     const i = ctx.intensity;
+    this.lastI = i;
 
     if (this.state === 'gone') {
       this.timer -= dt * (0.6 + i * 2.4);
@@ -228,24 +246,70 @@ export class Presence {
       this.charge(dt, ctx, i);
     }
 
-    // --- gait: a walk cycle that is nearly right
+    // --- gait, or the absence of one
+    //
+    // The mimicry is worth more than any pose in the file: while the inspector
+    // is holding a frame to document a chair, this stops mid-stride and raises
+    // its hands to exactly the height the inspector's are at, and does not
+    // move again until they are finished. It is not attacking. It is filing.
+    this.mimic += ((ctx.documenting ? 1 : 0) - this.mimic) * Math.min(1, dt * 5.5);
     const moving = this.state === 'stalking' || this.state === 'charging';
     const rate = this.state === 'charging' ? 13 : 3.4;
     if (moving && (!visible || this.state === 'charging')) this.stride += dt * rate;
     for (let n = 0; n < this.limbs.length; n++) {
-      const swing = Math.sin(this.stride + (n % 2 ? Math.PI : 0)) * (n < 2 ? 0.34 : 0.5);
-      this.limbs[n].rotation.x = swing * (this.state === 'charging' ? 1.9 : 1);
-      // the arms also do something arms do not do
-      if (n < 2) this.limbs[n].rotation.z = Math.sin(time * 0.7 + n) * 0.12;
+      // limbs are [arm, leg] per side: even indices are arms, and a walk is
+      // contralateral — the left arm goes with the right leg
+      const isArm = n % 2 === 0;
+      const rightSide = n >= 2;
+      const phase = (isArm ? +rightSide : +!rightSide) * Math.PI;
+      const swing = Math.sin(this.stride + phase) * (isArm ? 0.34 : 0.5);
+      const walk = swing * (this.state === 'charging' ? 1.9 : 1);
+      // the held pose: forearms up, elbows in, holding nothing at eye level
+      const held = isArm ? -1.42 : 0;
+      this.limbs[n].rotation.x = walk * (1 - this.mimic) + held * this.mimic;
+      if (isArm) {
+        const drift = Math.sin(time * 0.7 + n) * 0.12;
+        this.limbs[n].rotation.z = drift * (1 - this.mimic) + (rightSide ? -0.3 : 0.3) * this.mimic;
+      }
     }
     // a head that tilts a few degrees further every time you check
     this.head.rotation.z = Math.sin(time * 0.23) * 0.10 + (this.state === 'charging' ? 0.5 : 0);
     this.face.rotation.z = this.head.rotation.z;
 
-    // it is brighter the closer it gets, which is not how faces work
-    this.faceMat.opacity = THREE.MathUtils.clamp(0.7 + (12 - this.distance) * 0.03, 0.55, 1);
+    // it is brighter the closer it gets, which is not how faces work — and
+    // while it is copying the inspector it is brighter still
+    this.faceMat.opacity = THREE.MathUtils.clamp(
+      0.7 + (12 - this.distance) * 0.03 + this.mimic * 0.3,
+      0.55,
+      1,
+    );
 
     this.group.position.copy(this.pos);
+  }
+
+  /**
+   * A walkable spot on a ring around the inspector that is currently outside
+   * the view frustum but has a clear line to them — the one bearing they are
+   * not covering. Put something here and the fright is entirely self-inflicted:
+   * nothing happens until they decide, on their own, to turn around.
+   */
+  blindSpot(ctx: PresenceContext, min = 2.4, max = 4.6): THREE.Vector3 | null {
+    const start = this.rng() * Math.PI * 2;
+    const probe = new THREE.Vector3();
+    for (let n = 0; n < 16; n++) {
+      const a = start + (n / 16) * Math.PI * 2;
+      const d = min + this.rng() * (max - min);
+      const x = ctx.player.x + Math.cos(a) * d;
+      const z = ctx.player.z + Math.sin(a) * d;
+      // walkable means collision gives the point back unchanged
+      const hit = ctx.collide(x, z, BODY_R + 0.14);
+      if (Math.hypot(hit.x - x, hit.z - z) > 0.02) continue;
+      probe.set(x, HEIGHT - 0.2, z);
+      if (ctx.frustum.containsPoint(probe)) continue;
+      if (!ctx.lineOfSight(ctx.player, probe)) continue;
+      return new THREE.Vector3(x, 0, z);
+    }
+    return null;
   }
 
   // --------------------------------------------------------------- behaviour
@@ -271,9 +335,11 @@ export class Presence {
   /** the rule, and the way the rule stops applying */
   private stalk(dt: number, ctx: PresenceContext, visible: boolean, i: number) {
     // Observed, it holds — mostly. Past the halfway mark it creeps while you
-    // watch, which is the moment the floor stops having rules.
+    // watch, which is the moment the floor stops having rules. While the
+    // inspector is documenting it holds absolutely, whatever the intensity:
+    // it has something else to do with its hands.
     const watchedSpeed = i > 0.5 ? (i - 0.5) * 1.9 : 0;
-    const speed = visible ? watchedSpeed : 1.5 + i * 2.6;
+    const speed = ctx.documenting && visible ? 0 : visible ? watchedSpeed : 1.5 + i * 2.6;
 
     if (speed > 0.001) this.step(dt, speed, ctx);
 
@@ -282,7 +348,12 @@ export class Presence {
       this.timer -= dt;
       if (this.timer <= 0) {
         this.timer = 3.5 - i * 2.2;
-        const jump = ctx.pickCell(Math.max(2.2, this.distance - 7), Math.max(4, this.distance - 1.5));
+        // Past halfway it stops settling for "nearer" and starts choosing the
+        // bearing that is not covered — which is usually directly behind.
+        const behind = i > 0.5 && this.rng() < (i - 0.5) * 1.6 ? this.blindSpot(ctx, 2.6, 5) : null;
+        const jump =
+          behind ??
+          ctx.pickCell(Math.max(2.2, this.distance - 7), Math.max(4, this.distance - 1.5));
         if (jump && !ctx.frustum.containsPoint(new THREE.Vector3(jump.x, 1.5, jump.z))) {
           this.pos.set(jump.x, 0, jump.z);
           this.distance = Math.hypot(ctx.player.x - jump.x, ctx.player.z - jump.z);
@@ -308,13 +379,27 @@ export class Presence {
   private contact() {
     this.state = 'contact';
     this.onContact?.();
-    this.banish(20, 40);
+    // How long it stays gone afterwards is the whole difference between a
+    // floor with a monster on it and a floor that has been given to one. Early
+    // on, arriving costs it the rest of the corridor. Deep in, it is back
+    // before the inspector's hands have stopped.
+    const i = this.lastI;
+    this.banish(24 - i * 19, 44 - i * 33);
   }
 
-  /** walk toward the player, sliding off whatever it walks into */
+  /**
+   * Walk at where the inspector is going to be, sliding off whatever it walks
+   * into. Aiming at where they *are* is what makes a pursuer trail politely
+   * along behind and lose every corner; aiming at the intercept is what makes
+   * it appear at the far end of the corridor you were about to turn into. The
+   * lead is capped so it does not sprint at empty floor when they change
+   * their mind, which they will.
+   */
   private step(dt: number, speed: number, ctx: PresenceContext) {
-    const dx = ctx.player.x - this.pos.x;
-    const dz = ctx.player.z - this.pos.z;
+    const raw = Math.hypot(ctx.player.x - this.pos.x, ctx.player.z - this.pos.z) || 1;
+    const lead = Math.min(2.2, raw / Math.max(speed, 0.6));
+    const dx = ctx.player.x + ctx.playerVel.x * lead - this.pos.x;
+    const dz = ctx.player.z + ctx.playerVel.z * lead - this.pos.z;
     const len = Math.hypot(dx, dz) || 1;
     let nx = this.pos.x + (dx / len) * speed * dt;
     let nz = this.pos.z + (dz / len) * speed * dt;

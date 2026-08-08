@@ -12,6 +12,8 @@ const KIND_LABEL: Record<string, string> = {
   mundane: 'NO DEVIATION',
   amend: 'AMENDMENT',
   notice: 'TRANSCRIPT',
+  // not a label the inspector has ever written. it is in the sequence anyway.
+  observed: 'SUBJECT',
 };
 
 export class LedgerUI {

@@ -85,6 +85,13 @@ export class AudioEngine {
   private attn = 0;
   private ducked = false;
   private masterVolume = 1;
+  /** the resting level of each bed voice on this floor, before the hush */
+  private bedRoom = 0;
+  private bedHum = 0;
+  private bedDrone = 0;
+  /** 0..1 — the building holding its breath. scales the whole ambient bed. */
+  private hushAmt = 0;
+  private hushApplied = -1;
   /** 0 = the original quiet inspection, 1 = nightmare */
   private dreadScale = 1;
   /** print sound events as text — the audio carries half the game */
@@ -247,9 +254,14 @@ export class AudioEngine {
     this.attn = 0;
     this.ducked = false;
     if (!this.ctx) return;
-    this.ramp(this.roomGain.gain, 0.014, 3);
-    this.ramp(this.humGain.gain, 0.008 * spec.hum + 0.002, 3);
-    this.ramp(this.droneGain.gain, Math.min(0.05, 0.004 + depth * 0.006), 6);
+    this.bedRoom = 0.014;
+    this.bedHum = 0.008 * spec.hum + 0.002;
+    this.bedDrone = Math.min(0.05, 0.004 + depth * 0.006);
+    this.hushAmt = 0;
+    this.hushApplied = -1;
+    this.ramp(this.roomGain.gain, this.bedRoom, 3);
+    this.ramp(this.humGain.gain, this.bedHum, 3);
+    this.ramp(this.droneGain.gain, this.bedDrone, 6);
     this.nextEventAt = performance.now() / 1000 + 20 + this.rng() * 30;
     this.stopSpots();
     // a scare may have left the bus ducked when the floor changed under it
@@ -282,8 +294,104 @@ export class AudioEngine {
    *  slightly thicker room. always gradual, never a spike. */
   setAttention(a: number) {
     this.attn = Math.max(0, Math.min(1, a));
+    this.bedRoom = 0.014 + this.attn * 0.006;
     if (!this.ctx || this.ducked) return;
-    this.ramp(this.roomGain.gain, 0.014 + this.attn * 0.006, 5);
+    this.ramp(this.roomGain.gain, this.bedRoom * this.hushFactor, 5);
+  }
+
+  private get hushFactor(): number {
+    return 1 - this.hushAmt * 0.94;
+  }
+
+  /**
+   * The held breath. The room tone, the ventilation and the descent drone are
+   * the three things that have been running without interruption since the
+   * player put the headphones on, and taking them away is the loudest thing
+   * this engine can do. Ears that have spent ten minutes adapting to a floor
+   * at 0.014 hear its absence as a physical event.
+   *
+   * Ramps rather than gates — a hard cut is a dropout, and a dropout is a bug.
+   * Called every frame, so it only touches the graph when the value has
+   * actually moved.
+   */
+  setHush(v: number) {
+    // snap the tail to zero, so the bed always comes all the way back
+    const next = v < 0.02 ? 0 : Math.min(1, v);
+    this.hushAmt = next;
+    if (!this.ctx || this.ducked) return;
+    if (next === this.hushApplied) return;
+    if (next !== 0 && Math.abs(next - this.hushApplied) < 0.06) return;
+    this.hushApplied = next;
+    // out fast, back slowly: the building stops all at once, and starts again
+    // by degrees, so you are never given a moment where it is plainly over
+    const t = next > 0.5 ? 0.28 : 1.1;
+    const k = this.hushFactor;
+    this.ramp(this.roomGain.gain, this.bedRoom * k, t);
+    this.ramp(this.humGain.gain, this.bedHum * k, t);
+    this.ramp(this.droneGain.gain, this.bedDrone * k, t);
+  }
+
+  /**
+   * What fills the hole the hush leaves: a tone that rises over the whole
+   * held breath and is never quite audible on its own — it starts below where
+   * most playback can reproduce it and ends only just inside speech. On
+   * headphones it is felt as pressure rather than heard as a note, and it
+   * stops dead at the top rather than resolving.
+   */
+  swell(dur: number) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + dur * 0.92);
+    // cut, not release. the swell does not get to finish.
+    g.gain.exponentialRampToValueAtTime(0.0002, t + dur);
+    g.connect(this.scare);
+    for (const [from, to, detune] of [[24, 46, 0], [24.6, 46.9, 0]] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.detune.value = detune;
+      o.frequency.setValueAtTime(from, t);
+      o.frequency.exponentialRampToValueAtTime(to, t + dur);
+      o.connect(g);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+    }
+  }
+
+  /**
+   * Footsteps behind the inspector, in the inspector's own rhythm — and one
+   * more after they have stopped. The extra step is the entire point; the
+   * matched ones exist to make it deniable right up until it isn't.
+   */
+  followSteps(pos: THREE.Vector3, count: number, interval: number) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const out = this.scarePanner(pos);
+    const soft = this.floorSpec
+      ? this.floorSpec.palette === 'sodium-orange' || this.floorSpec.palette === 'tungsten-dust'
+      : false;
+    for (let n = 0; n < count; n++) {
+      const last = n === count - 1;
+      window.setTimeout(
+        () => {
+          if (!this.ctx) return;
+          this.burst({
+            dur: 0.09 + Math.random() * 0.06,
+            filter: 'bandpass',
+            freq: (soft ? 210 + Math.random() * 180 : 540 + Math.random() * 620) * (n % 2 ? 1 : 0.86),
+            q: soft ? 0.8 : 1.5,
+            // the one that comes after you stopped is the heaviest of them
+            gain: (soft ? 0.16 : 0.2) * (last ? 1.5 : 1),
+            attack: 0.002,
+            out,
+          });
+        },
+        // the last one arrives late, into the gap the player has just made
+        n * interval * 1000 + (last ? interval * 620 : 0),
+      );
+    }
+    window.setTimeout(() => out.disconnect(), (count + 2) * interval * 1000 + 1200);
   }
 
   get attention(): number {
@@ -683,6 +791,23 @@ export class AudioEngine {
     this.staticBurst(0.4);
     // and then the room is suddenly, wrongly, empty
     setTimeout(() => this.duckScare(1.6), 900);
+  }
+
+  /**
+   * The descent. `duck()` has just taken the scare bus to silence because
+   * between floors nothing is supposed to happen — so this lifts it back for
+   * exactly as long as it needs, and puts breath and then words inside a
+   * sealed metal box whose reverb the player has already learned means "in
+   * here with me".
+   */
+  intrusion() {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    this.ramp(this.scare.gain, SCARE_LEVEL * this.dreadScale * 0.85, 0.25);
+    this.breath(2);
+    setTimeout(() => this.whisper(3), 950);
+    setTimeout(() => {
+      if (this.ctx) this.ramp(this.scare.gain, 0, 0.5);
+    }, 2300);
   }
 
   /** pull the scare bus down for a moment — silence right after noise */

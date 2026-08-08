@@ -29,8 +29,10 @@ import { LedgerUI } from './ui/ledger';
 import { SettingsUI } from './ui/settings';
 import { Overlay } from './ui/overlay';
 import { shareCard } from './ui/share';
-import { Dread, type DreadLevel, type ScareKind } from './core/dread';
+import { Dread, type DreadLevel, type DreadPhase, type ScareKind } from './core/dread';
+import { Watcher } from './core/watcher';
 import { Presence } from './world/presence';
+import { observation } from './world/observations';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
@@ -141,8 +143,14 @@ export class Game {
 
   // ---- the escalation
   private dread = new Dread();
+  /** the model of the person playing: what they flinch at, and how settled
+   *  they have become since the last thing that worked */
+  private watcher = new Watcher();
   private overlay: Overlay;
   private presence: Presence | null = null;
+  /** last frame's floor position, for the velocity the presence aims ahead of */
+  private lastPlayerPos = new THREE.Vector2();
+  private playerVel = { x: 0, z: 0 };
   /** the building turning the inspector's head: target yaw and remaining time */
   private snap: { yaw: number; t: number } | null = null;
   /** ambient intensity before the light goes out, so it can come back */
@@ -196,11 +204,13 @@ export class Game {
     this.flashlight.shadow.normalBias = 0.03;
     this.pipeline.setShadowSource(this.flashlight);
 
+    this.dread.watcher = this.watcher;
     this.dread.onScare = (kind, intensity) => this.scare(kind, intensity);
     this.dread.onBeat = (intensity) => {
       this.audio.heartbeat(intensity);
       if (intensity > 0.72 && Math.random() < 0.25) this.haptics.jolt('small');
     };
+    this.dread.onPhase = (phase, seconds) => this.onPhase(phase, seconds);
 
     this.controls.onInspect = () => this.inspect();
     this.player.onStep = (i) => {
@@ -418,6 +428,10 @@ export class Game {
     const el = built.grid.elevator;
     const yaw = facingToYaw(el.doorDir) + Math.PI; // props face +z; camera -z
     this.player.teleport(el.cx, el.cz, yaw);
+    // the velocity the figure aims ahead of is a difference between frames;
+    // seed it from the new floor so arriving is not read as a sprint
+    this.lastPlayerPos.copy(this.player.pos);
+    this.playerVel.x = this.playerVel.z = 0;
     this.player.frozen = true;
     this.exitedCar = false;
     this.insideCarSince = 0;
@@ -505,8 +519,10 @@ export class Game {
     kind: EntryKind = 'discrepancy',
     anchor?: string,
     track = true,
+    /** seconds past the inspector's own clock to stamp this from */
+    ahead = 0,
   ): LedgerEntry {
-    const s = Math.floor(this.save.elapsed);
+    const s = Math.floor(this.save.elapsed + ahead);
     const stamp = [
       String(Math.floor(s / 3600)).padStart(2, '0'),
       String(Math.floor((s % 3600) / 60)).padStart(2, '0'),
@@ -515,6 +531,9 @@ export class Game {
     const entry: LedgerEntry = { id, floor, stamp, text: fillTokens(text), kind, anchor };
     this.save.ledger.push(entry);
     if (track) this.save.logged.push(id);
+    // the watcher counts silence in the record — but only the inspector's own
+    // handwriting resets that clock
+    if (kind !== 'observed' && kind !== 'filed') this.watcher.noteLog();
     return entry;
   }
 
@@ -1131,7 +1150,115 @@ export class Game {
         this.audio.bang(undefined, 1.1);
         this.haptics.jolt('hard');
         break;
+
+      case 'follow': {
+        // steps behind, in the inspector's own rhythm — and one more than
+        // they took. no stinger, no shake: the fright is arithmetic.
+        const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
+        const at = new THREE.Vector3(this.player.pos.x, 0, this.player.pos.y).add(
+          back.multiplyScalar(2.4 + Math.random() * 1.6),
+        );
+        this.audio.followSteps(at, 4 + Math.floor(Math.random() * 3), 0.42 - i * 0.1);
+        if (this.settings.captions) this.hud.showCaption('footsteps, behind — matching');
+        break;
+      }
+
+      case 'stare': {
+        // Put it in the one bearing they are not covering, silently, and then
+        // do nothing whatsoever. This is the only scare in the file the
+        // building does not spring: the player springs it, on their own
+        // schedule, by deciding to turn around. Some never do.
+        const p = this.presence;
+        if (!p || !p.enabled || !this.collide) break;
+        // never yank one that is already committed — a charge that teleports
+        // is a glitch, and a glitch is the one thing that breaks the spell
+        if (p.state !== 'gone' && p.state !== 'lurking') break;
+        const spot = p.blindSpot(this.presenceContext(), 2.4, 5.2);
+        if (spot) p.place(spot, 'lurking');
+        break;
+      }
+
+      case 'observed':
+        this.writeObservation();
+        break;
+
+      case 'closer':
+        // the walls, without ever being seen to move. no sound at all.
+        this.dread.contract(0.55 + i * 0.45);
+        if (this.settings.captions) this.hud.showCaption('the room is smaller');
+        break;
     }
+  }
+
+  /**
+   * The building takes a breath and holds it. Everything that has been running
+   * since the headphones went on — room tone, ventilation, the descent drone,
+   * the flashlight's bad connection, the camera's permanent sway — stops at
+   * once, and what fills the gap is a tone below hearing and the inspector's
+   * own pulse. About a quarter of these resolve into nothing at all, which is
+   * what makes the other three quarters unlivable.
+   */
+  private onPhase(phase: DreadPhase, seconds: number) {
+    if (this.state !== 'play') return;
+    if (phase === 'tell') {
+      this.audio.swell(seconds);
+      this.haptics.jolt('small');
+    }
+  }
+
+  /** the building writes in the inspector's ledger, about the inspector */
+  private writeObservation() {
+    if (!this.built) return;
+    const floor = this.built.spec.floor;
+    const obs = observation({
+      floor,
+      stillFor: this.watcher.stillFor,
+      sinceLog: this.watcher.sinceLog,
+      lookBacks: this.watcher.lookBacks,
+      floorT: this.watcher.floorT,
+      elapsed: this.save.elapsed,
+      // only the inspector's own handwriting counts here — the whole point of
+      // the line about the handwriting is that these are not in it
+      entries: this.save.ledger.filter((e) => {
+        const k = e.kind ?? 'discrepancy';
+        return k !== 'filed' && k !== 'observed';
+      }).length,
+      fear: this.watcher.fear,
+      worst: this.watcher.worst(),
+      reading: this.ledgerUI.isOpen,
+      last: [...this.save.ledger].reverse().find((e) => e.kind === 'observed')?.text ?? null,
+      rng: Math.random,
+    });
+    // `ahead` stamps it from further along than the inspector has reached.
+    // Nothing in the fiction can produce a timestamp the clock has not got to.
+    this.writeEntry(
+      `obs-f${floor}-${this.save.ledger.length}`,
+      floor,
+      obs.text,
+      'observed',
+      undefined,
+      false,
+      obs.ahead,
+    );
+    // the pencil sound is the inspector's. this is not the pencil.
+    this.audio.deadClick();
+    this.hud.pulseTab();
+    if (this.ledgerUI.isOpen) this.openLedger();
+    this.persist();
+  }
+
+  /** everything the figure needs to decide with, rebuilt from live state */
+  private presenceContext() {
+    return {
+      player: new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y),
+      frustum: this.frustum,
+      lineOfSight: (a: THREE.Vector3, b: THREE.Vector3) => this.lineOfSight(a, b),
+      collide: this.collide ?? ((x: number, z: number) => ({ x, z })),
+      pickCell: (min: number, max: number) => this.pickCell(min, max),
+      intensity: this.dread.intensity,
+      playerVel: this.playerVel,
+      documenting: this.documenting !== null,
+    };
   }
 
   /** the first frame it is in view with nothing in the way */
@@ -1181,21 +1308,20 @@ export class Game {
     this.projScreen.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projScreen);
 
+    // where they are heading, not where they are: what the figure aims at
+    const dx = this.player.pos.x - this.lastPlayerPos.x;
+    const dz = this.player.pos.y - this.lastPlayerPos.y;
+    const k = dt > 0 ? Math.min(1, dt * 6) : 0;
+    this.playerVel.x += (dx / Math.max(dt, 1e-4) - this.playerVel.x) * k;
+    this.playerVel.z += (dz / Math.max(dt, 1e-4) - this.playerVel.z) * k;
+    this.lastPlayerPos.copy(this.player.pos);
+
     const p = this.presence;
     if (p) {
       const allowed = this.dread.presenceAllowed;
       if (p.enabled && !allowed) p.banish(10, 20);
       p.enabled = allowed;
-      if (allowed && playing && this.collide) {
-        p.update(dt, this.time, {
-          player: new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y),
-          frustum: this.frustum,
-          lineOfSight: (a, b) => this.lineOfSight(a, b),
-          collide: this.collide,
-          pickCell: (min, max) => this.pickCell(min, max),
-          intensity: this.dread.intensity,
-        });
-      }
+      if (allowed && playing && this.collide) p.update(dt, this.time, this.presenceContext());
     }
 
     this.dread.update(dt, {
@@ -1205,7 +1331,11 @@ export class Game {
       presenceVisible: p?.seen ?? false,
       speed: this.player.speed01,
       documenting: this.documenting !== null,
+      yaw: this.player.yaw,
     });
+
+    // the held breath, in the mix: the bed withdraws and comes back by degrees
+    this.audio.setHush(this.dread.frame.hush);
 
     this.applyDread(dt);
 
@@ -1299,6 +1429,13 @@ export class Game {
         this.audio.duck();
         const next = built.spec.floor + 1;
         window.setTimeout(() => this.hud.setDepth(Math.min(next, 99)), 1700);
+        // The car has been the one place in the building where nothing
+        // happens, and the player has spent four floors learning that. Below
+        // floor three it stops being true — sealed in a metal box, in the
+        // dark, frozen, with the doors shut, and something breathing in it.
+        if (next >= 4 && this.dread.presenceAllowed) {
+          window.setTimeout(() => this.audio.intrusion(), 1400);
+        }
         this.state = 'idle';
         window.setTimeout(() => {
           this.save.floor = next;
@@ -1486,6 +1623,7 @@ export class Game {
       },
       amendTargets: () => this.amendTargets,
       dread: this.dread,
+      watcher: this.watcher,
       presence: () => this.presence,
       /** hold a face on screen long enough for a slow capture to catch it */
       overlayFace: (ms = 6000, fill = 1.2) => this.overlay.flashFace({ ms, fill, static: 0.5 }),
