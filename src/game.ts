@@ -722,9 +722,11 @@ export class Game {
     else if (hit.kind === 'notice') this.logNotice(hit.target);
     else if (hit.kind === 'amend') this.logAmend(hit.target);
     // The pencil coming off the page was always the building's favourite
-    // moment to make a sound. It no longer settles for a sound.
-    if (Math.random() < 0.3 + this.dread.intensity * 0.55) {
-      this.scare(Math.random() < 0.55 ? 'face' : 'breath', this.dread.intensity);
+    // moment to make a sound. Sometimes it does not settle for a sound — but
+    // only sometimes: documentation is the loop the player lives in, and a
+    // face on most pencil-lifts turns the scare into a filing fee.
+    if (Math.random() < 0.12 + this.dread.intensity * 0.25) {
+      this.scare(Math.random() < 0.35 ? 'face' : 'breath', this.dread.intensity);
     }
   }
 
@@ -1173,7 +1175,7 @@ export class Game {
         // never yank one that is already committed — a charge that teleports
         // is a glitch, and a glitch is the one thing that breaks the spell
         if (p.state !== 'gone' && p.state !== 'lurking') break;
-        const spot = p.blindSpot(this.presenceContext(), 2.4, 5.2);
+        const spot = p.blindSpot(this.presenceContext(), 3.5, 6.5);
         if (spot) p.place(spot, 'lurking');
         break;
       }

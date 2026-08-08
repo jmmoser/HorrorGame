@@ -206,7 +206,7 @@ export class Presence {
     this.lastI = i;
 
     if (this.state === 'gone') {
-      this.timer -= dt * (0.6 + i * 2.4);
+      this.timer -= dt * (0.5 + i * 1.3);
       if (this.timer <= 0) this.spawn(ctx);
       this.seen = false;
       this.distance = Infinity;
@@ -293,7 +293,7 @@ export class Presence {
    * not covering. Put something here and the fright is entirely self-inflicted:
    * nothing happens until they decide, on their own, to turn around.
    */
-  blindSpot(ctx: PresenceContext, min = 2.4, max = 4.6): THREE.Vector3 | null {
+  blindSpot(ctx: PresenceContext, min = 3.4, max = 6): THREE.Vector3 | null {
     const start = this.rng() * Math.PI * 2;
     const probe = new THREE.Vector3();
     for (let n = 0; n < 16; n++) {
@@ -317,7 +317,7 @@ export class Presence {
   private spawn(ctx: PresenceContext) {
     const i = ctx.intensity;
     // close enough to be found, far enough to still be a shape
-    const at = ctx.pickCell(8 - i * 3, 22) ?? ctx.pickCell(4, 30);
+    const at = ctx.pickCell(10 - i * 3, 24) ?? ctx.pickCell(6, 30);
     if (!at) {
       this.timer = 6;
       return;
@@ -347,13 +347,13 @@ export class Presence {
     if (!visible) {
       this.timer -= dt;
       if (this.timer <= 0) {
-        this.timer = 3.5 - i * 2.2;
+        this.timer = 6 - i * 2.6;
         // Past halfway it stops settling for "nearer" and starts choosing the
         // bearing that is not covered — which is usually directly behind.
-        const behind = i > 0.5 && this.rng() < (i - 0.5) * 1.6 ? this.blindSpot(ctx, 2.6, 5) : null;
+        const behind = i > 0.5 && this.rng() < (i - 0.5) * 1.2 ? this.blindSpot(ctx, 3.4, 6.2) : null;
         const jump =
           behind ??
-          ctx.pickCell(Math.max(2.2, this.distance - 7), Math.max(4, this.distance - 1.5));
+          ctx.pickCell(Math.max(3, this.distance - 5), Math.max(5, this.distance - 1.5));
         if (jump && !ctx.frustum.containsPoint(new THREE.Vector3(jump.x, 1.5, jump.z))) {
           this.pos.set(jump.x, 0, jump.z);
           this.distance = Math.hypot(ctx.player.x - jump.x, ctx.player.z - jump.z);
@@ -364,7 +364,7 @@ export class Presence {
     }
 
     // close and watched: it gives up pretending and comes
-    if (i > 0.45 && this.distance < 9 && visible && this.stateT > 3) {
+    if (i > 0.45 && this.distance < 8 && visible && this.stateT > 5.5) {
       this.state = 'charging';
       this.stateT = 0;
     }
@@ -378,13 +378,14 @@ export class Presence {
 
   private contact() {
     this.state = 'contact';
-    this.onContact?.();
     // How long it stays gone afterwards is the whole difference between a
-    // floor with a monster on it and a floor that has been given to one. Early
-    // on, arriving costs it the rest of the corridor. Deep in, it is back
-    // before the inspector's hands have stopped.
+    // floor with a monster on it and a floor that has been given to one.
+    // Arriving always costs it real time — even deep in, the inspector gets
+    // the corridor back long enough to walk it. Banish before the callback:
+    // the game may impose a longer exile in `onContact`, and it must win.
     const i = this.lastI;
-    this.banish(24 - i * 19, 44 - i * 33);
+    this.banish(32 - i * 16, 55 - i * 27);
+    this.onContact?.();
   }
 
   /**
