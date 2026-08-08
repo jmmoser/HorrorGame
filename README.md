@@ -9,9 +9,20 @@ The building has been empty for thirty years. It does not behave empty.
 ![Floor −03, moonlight-blue open plan](docs/screenshots/floor-3.png)
 ![Floor −04, tungsten archive stacks](docs/screenshots/floor-4.png)
 
-No monsters. No chases. No jump scares. No death. The horror is a slow,
-compounding wrongness in beautiful, still, empty spaces — and the growing
-certainty that the building knows it is being documented.
+There is something on every floor with you. It does not move while you are
+looking at it. It is closer every time you look away.
+
+> **Warning.** This build ships at its maximum setting by default. It contains
+> sudden full-screen images, screaming and impact sounds at full level, rapid
+> flashing, and a pursuing entity. If that is not what you want — or if you
+> are photosensitive — set **exposure** in Form 7-B (the settings form) before
+> you begin. **`survey only`** restores the original inspection exactly: no
+> entity, no stingers, no flashes, no camera shake. The intermediate settings
+> scale everything between the two.
+
+Still no death, and still no fail state. The slow, compounding wrongness of
+beautiful empty spaces is all still here and still does most of the work —
+the difference is that the building has stopped waiting for you to notice.
 
 ## The vertical slice (this build)
 
@@ -51,6 +62,35 @@ certainty that the building knows it is being documented.
   thresholds the building answers with alterations of its own — which become
   new amendments to find. Curiosity vs. nerve is the floor-level decision:
   the call button is lit, and you are still writing.
+- **The presence.** A figure, too tall and too thin, built from the same
+  primitives as the furniture and wearing a procedurally drawn face that is
+  unlit — the same brightness at twenty metres as at one, which is why you
+  find it before you find anything else in the dark. It obeys the old rule:
+  it holds still while observed, walks when it is not, and takes steps you
+  never saw it take. Past the halfway point of a floor's intensity it stops
+  obeying, creeps while you watch, and eventually simply runs at you. Reaching
+  you is not a death — it is an arrival: the whole frame becomes its face, and
+  then there is nothing there and the ledger says there never was.
+- **The director.** A per-floor intensity — depth, attention, how long you
+  have been on this floor, how close the thing is — spent continuously on
+  twelve kinds of shock: subliminal face flashes, held faces, signal loss,
+  whispers at ear distance, screams sourced behind walls, body-weight impacts,
+  breathing that stops mid-breath, blackouts that end on a face, words written
+  across the lens, shapes crossing the beam, your head being turned for you,
+  and the floor dropping a metre. At `unrestricted` the gap between them is
+  one to three seconds and never widens.
+- **A frame that never settles.** The composite gained a second half: barrel
+  warp breathing on a heartbeat, screen slide, VHS tearing in torn bands,
+  channel separation, a blood wash that survives the vignette, a tunnel
+  closing on each beat, and a two-frame stab where the image is its own
+  negative. The flashlight has a bad connection at the best of times, and goes
+  out entirely when the building decides.
+- **A second audio bus.** The ambient engine still never spikes; on top of it
+  sits `scare`, which does nothing else — formant screams, dissonant string
+  clusters, impacts, hard-panned whispers, breath, sub drops, a heartbeat that
+  quickens with intensity. It is hard-limited so a stack of simultaneous hits
+  lands under the ceiling instead of clipping, it runs through the floor's own
+  reverb, and it is gated to silence by the exposure setting.
 - **Notices.** Pinned paper — a lettings suspension, a tenant's note, a
   retrieval slip for the building's own file — can be read and transcribed
   into the ledger.
@@ -86,10 +126,11 @@ certainty that the building knows it is being documented.
   depth and occasionally desynchronizes.
 - **PWA** — installable, service-worker cached, fully offline after first
   load. The entire game is code; there are no fetched assets.
-- **Settings, filed as Form 7-B** — quality (auto/low/medium/high/ultra), a
-  steady-frame governor, film effects, look speed, invert, field of view,
-  volume, head-movement and haptics toggles for comfort, and sound captions
-  that name what the building just did and how far away it was.
+- **Settings, filed as Form 7-B** — **exposure** (unrestricted / severe /
+  limited / survey only), quality (auto/low/medium/high/ultra), a steady-frame
+  governor, film effects, look speed, invert, field of view, volume,
+  head-movement and haptics toggles for comfort, and sound captions that name
+  what the building just did and how far away it was.
 - **Depth persistence** — auto-save on every floor and continuously during
   play (localStorage), instant resume, depth counter always on screen.
 
@@ -133,7 +174,11 @@ software rendering is slow, so it takes a few minutes.)
 ```
 src/
   core/        types, seeded RNG (mulberry32 + per-floor streams), save
+    dread.ts   the escalation director: intensity, scheduling, the frame it
+               hands to the camera and the composite
   world/
+    presence.ts the figure — geometry, the observation rule, and how it breaks
+    faces.ts   procedurally drawn faces, for the head and for the whole screen
     specs.ts   the five floors: ASCII maps + anchors + discrepancy pools
     grid.ts    map parsing, collision queries, authoring validation,
                the long-hallway stretch mutation
@@ -156,6 +201,8 @@ src/
     quality.ts  tiers, device detection, persisted player settings
   ui/          HUD (depth, reticle, ledger tab, captions), ledger + blueprint,
                settings form, share card
+    overlay.ts the layer above the building: full-frame faces, signal loss,
+               washes, the word — DOM, so it lands on the very next frame
   game.ts      state machine: arrive → document → descend; silent alterations
 ```
 
@@ -243,9 +290,30 @@ frustum and more than ~5.5m away for 1.6 seconds. Never on screen.
 - **No leaderboard backend, no accounts, no monetization** — per the brief.
   Depth is local. The share card is the growth loop.
 
-## Hard constraints honored
+## The constraints, and which ones are gone
 
-No jump scares, no volume spikes (every sound is quiet and slow-attack), no
-entities, no game-over, no chase, no explanations. The ending does not
-resolve anything: below floor −05 the schedule ends, the elevator does not
-stop, and the counter keeps counting.
+The original brief was "no jump scares, no volume spikes, no entities, no
+game-over, no chase, no explanations." Four of those are now settings rather
+than constraints, and the honest summary is:
+
+| | `unrestricted` (default) | `survey only` |
+|---|---|---|
+| jump scares | every 1–3 seconds | none |
+| volume spikes | a dedicated, limited scare bus | none — every sound slow-attack |
+| entity | one per floor, stalking | none |
+| chase | it runs at you above half intensity | none |
+| game-over | **still none** | still none |
+| explanations | **still none** | still none |
+
+The two that survive at every setting are the two the game was actually built
+on. There is no death, no failure, and nothing to lose — the thing that
+reaches you takes nothing except the assumption that you were alone. And
+nothing is ever explained: below floor −05 the schedule ends, the elevator
+does not stop, and the counter keeps counting.
+
+`survey only` is not a degraded mode, it is the original build: every dread
+uniform is zero and the composite's whole second half is branched over, the
+scare bus is gated to silence *and* every voice on it early-returns, and the
+figure never enters the frame. It exists because the slow
+version is a real game that some people will prefer, and because rapid
+flashing is a medical issue rather than a taste one.

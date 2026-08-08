@@ -27,7 +27,10 @@ import { loadSettings, resolveProfile, saveSettings, type QualityProfile, type S
 import { Hud } from './ui/hud';
 import { LedgerUI } from './ui/ledger';
 import { SettingsUI } from './ui/settings';
+import { Overlay } from './ui/overlay';
 import { shareCard } from './ui/share';
+import { Dread, type DreadLevel, type ScareKind } from './core/dread';
+import { Presence } from './world/presence';
 
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
@@ -38,6 +41,29 @@ const DOC_TIME = 1.0;
 const ATTN = { real: 0.1, overQuota: 0.25, amend: 0.2, mundane: 0.07, notice: 0.04 };
 /** crossing these makes the building answer with an alteration of its own */
 const ATTN_THRESHOLDS = [0.3, 0.6];
+
+/** how loud the scare bus runs at each exposure setting */
+const DREAD_AUDIO: Record<DreadLevel, number> = {
+  off: 0,
+  unsettling: 0.45,
+  severe: 0.75,
+  nightmare: 1,
+};
+
+/** what the building writes across the frame. all of it is in the ledger's
+ *  own register, which is what makes it worse than a threat would be. */
+const DREAD_WORDS = [
+  'STOP WRITING',
+  'YOU ARE NOT ALONE ON THIS FLOOR',
+  'I READ IT',
+  'PUT IT DOWN',
+  'IT IS BEHIND YOU',
+  'THERE IS NO FLOOR SIX',
+  'LOOK UP',
+  'YOU HAVE BEEN HERE BEFORE',
+  'DO NOT FILE THIS',
+  'IT KNOWS YOUR CASE NUMBER',
+];
 
 type AlterationKind = AlterationDef['kind'];
 
@@ -113,8 +139,26 @@ export class Game {
   private contextLost = false;
   private fader = document.getElementById('fader')!;
 
+  // ---- the escalation
+  private dread = new Dread();
+  private overlay: Overlay;
+  private presence: Presence | null = null;
+  /** the building turning the inspector's head: target yaw and remaining time */
+  private snap: { yaw: number; t: number } | null = null;
+  /** ambient intensity before the light goes out, so it can come back */
+  private ambientBase = 0.5;
+  /** the flashlight's eased level, before the director's flicker is applied */
+  private flashSmooth = 40;
+  /** the eased field of view, before the director's kick is added */
+  private fovSmooth = 0;
+  /** one contact per floor is enough; more than that and it is a mechanic */
+  private contactsThisFloor = 0;
+
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
     this.save = save;
+    // the faces are drawn now, while the title is still fading: the first
+    // flash must not be the frame that pays for generating it
+    this.overlay = new Overlay(save.seed);
     this.settings = loadSettings();
     this.profile = resolveProfile(this.settings);
     this.renderer = new THREE.WebGLRenderer({
@@ -151,6 +195,12 @@ export class Game {
     this.flashlight.shadow.bias = -0.0012;
     this.flashlight.shadow.normalBias = 0.03;
     this.pipeline.setShadowSource(this.flashlight);
+
+    this.dread.onScare = (kind, intensity) => this.scare(kind, intensity);
+    this.dread.onBeat = (intensity) => {
+      this.audio.heartbeat(intensity);
+      if (intensity > 0.72 && Math.random() < 0.25) this.haptics.jolt('small');
+    };
 
     this.controls.onInspect = () => this.inspect();
     this.player.onStep = (i) => {
@@ -245,6 +295,19 @@ export class Game {
     this.haptics.enabled = this.settings.haptics;
     this.baseFov = (this.controls.isTouch ? 73 : 68) + this.settings.fovOffset;
     this.hud.setFpsVisible(this.settings.showFps);
+
+    // exposure: one setting drives the director, the scare bus, the overlay
+    // and whether there is anything on the floor with you
+    const level = this.settings.dread;
+    this.dread.setLevel(level);
+    this.audio.setDreadScale(DREAD_AUDIO[level]);
+    this.overlay.enabled = level !== 'off';
+    if (this.presence) this.presence.enabled = this.dread.presenceAllowed;
+    if (level === 'off') {
+      this.overlay.clear();
+      this.pipeline.setDread(this.dread.frame);
+      this.ambient.intensity = this.ambientBase;
+    }
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -285,6 +348,14 @@ export class Game {
     this.alteredAnchors = new Set();
     this.amendTargets = [];
     this.mundaneCount = 0;
+    this.contactsThisFloor = 0;
+    this.snap = null;
+    this.overlay.clear();
+    if (this.presence) {
+      this.scene.remove(this.presence.group);
+      this.presence.dispose();
+      this.presence = null;
+    }
     if (floorNum > FLOORS.length) {
       this.beginEnding();
       return;
@@ -302,9 +373,11 @@ export class Game {
     );
     this.scene.background = new THREE.Color(palette.fog);
     this.ambient.color.set(palette.ambient);
+    this.ambientBase = palette.ambientIntensity;
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
     this.flashlight.intensity = this.flashBase;
+    this.flashSmooth = this.flashBase;
     this.pipeline.setGrade(GRADES[spec.palette]);
     this.pipeline.setCeilingHeight(spec.ceilingHeight);
     assignShadowCasters(built.fixtureLights, this.profile);
@@ -348,6 +421,19 @@ export class Game {
     this.player.frozen = true;
     this.exitedCar = false;
     this.insideCarSince = 0;
+
+    // ---- there is something on this floor, and it is not on the schedule
+    this.dread.setFloor(spec.floor);
+    const presence = new Presence(hashCombine(this.save.seed, spec.floor * 7717 + 13));
+    presence.enabled = this.dread.presenceAllowed;
+    presence.onSighting = (d) => this.onSighting(d);
+    presence.onBlink = () => {
+      this.audio.staticBurst(0.1);
+      this.dread.kick(0.35, { static: 0.45 });
+    };
+    presence.onContact = () => this.onContact();
+    this.scene.add(presence.group);
+    this.presence = presence;
 
     this.hud.setDepth(spec.floor);
     window.setTimeout(() => {
@@ -616,6 +702,11 @@ export class Game {
     else if (hit.kind === 'mundane') this.logMundane(hit.target);
     else if (hit.kind === 'notice') this.logNotice(hit.target);
     else if (hit.kind === 'amend') this.logAmend(hit.target);
+    // The pencil coming off the page was always the building's favourite
+    // moment to make a sound. It no longer settles for a sound.
+    if (Math.random() < 0.3 + this.dread.intensity * 0.55) {
+      this.scare(Math.random() < 0.55 ? 'face' : 'breath', this.dread.intensity);
+    }
   }
 
   private inspect() {
@@ -788,6 +879,15 @@ export class Game {
     this.setFade(true);
     this.audio.duck();
     this.haptics.stop();
+    // below floor five the building has nothing left to prove: the frame goes
+    // still, and that stillness is the last thing the ending has to work with
+    this.dread.suspended = true;
+    this.overlay.clear();
+    this.camera.rotation.z = 0;
+    this.pipeline.setDread({
+      warp: 0, shakeX: 0, shakeY: 0, staticAmt: 0,
+      red: 0, flash: 0, ca: 0, dark: 0, pulse: 0,
+    });
     const countKind = (k: EntryKind) =>
       this.save.ledger.filter((e) => (e.kind ?? 'discrepancy') === k).length;
     const disc = countKind('discrepancy');
@@ -870,6 +970,274 @@ export class Game {
     this.player.frozen = true;
   }
 
+  // ------------------------------------------------------------- escalation
+
+  /** is there anything solid on the straight line between these two points? */
+  private lineOfSight(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    const rows = this.built?.grid.rows;
+    if (!rows) return false;
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.001) return true;
+    const steps = Math.ceil(dist / 0.28);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const cx = Math.floor((from.x + dx * t) / CS);
+      const cz = Math.floor((from.z + dz * t) / CS);
+      if (!isWalkable(charAt(rows, cx, cz))) return false;
+    }
+    return true;
+  }
+
+  /** a walkable cell centre this far from the inspector, or null */
+  private pickCell(min: number, max: number): THREE.Vector3 | null {
+    const p = new THREE.Vector3(this.player.pos.x, 1.3, this.player.pos.y);
+    const candidates = this.walkableCenters.filter((c) => {
+      const d = c.distanceTo(p);
+      return d >= min && d <= max;
+    });
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  /** somewhere out of sight to put a sound: behind a wall, or behind you */
+  private pickUnseenSpot(min: number, max: number): THREE.Vector3 {
+    const eye = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
+    for (let i = 0; i < 8; i++) {
+      const c = this.pickCell(min, max);
+      if (c && !this.lineOfSight(eye, c)) return c;
+    }
+    // nothing hidden nearby: put it directly behind the inspector's head
+    const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
+    return eye.clone().add(back.multiplyScalar(1.4));
+  }
+
+  /**
+   * The director decided; this is what it costs. Every branch here is a
+   * deliberate spike — image, sound and camera together, because any one of
+   * them alone is something a player learns to tune out inside a floor.
+   */
+  private scare(kind: ScareKind, i: number) {
+    if (this.state !== 'play') return;
+    const strong = 0.4 + i * 0.6;
+
+    switch (kind) {
+      case 'face':
+        this.overlay.flashFace({ ms: 55 + i * 45, fill: 0.85 + i * 0.5, static: 0.7 });
+        this.audio.stinger(i);
+        this.audio.staticBurst(0.09);
+        this.dread.kick(0.55 + i * 0.4, { flash: 0.55, static: 0.5 });
+        this.haptics.jolt('hard');
+        break;
+
+      case 'face-hold':
+        // held long enough to be looked at, which is the mistake
+        this.overlay.flashFace({ ms: 380, fill: 1.75, static: 0.25 });
+        this.audio.scream(1);
+        this.dread.kick(1.1, { flash: 0.7, static: 0.7, red: 0.55 });
+        this.dread.killLight(1.4);
+        this.haptics.jolt('contact');
+        break;
+
+      case 'static':
+        this.overlay.flashStatic(70 + Math.random() * 140, 1);
+        this.audio.staticBurst(0.2);
+        this.dread.kick(0.3, { static: 0.9 });
+        break;
+
+      case 'whisper':
+        this.audio.whisper(3 + Math.floor(Math.random() * 4));
+        this.dread.kick(0.14);
+        if (this.settings.captions) this.hud.showCaption('something said, close');
+        break;
+
+      case 'scream':
+        this.audio.scream(strong, this.pickUnseenSpot(3, 14));
+        this.overlay.flashWash('blood', 620, 0.75);
+        this.dread.kick(0.85, { red: 0.5 });
+        this.haptics.jolt('hard');
+        if (this.settings.captions) this.hud.showCaption('screaming — close, indoors');
+        break;
+
+      case 'bang':
+        this.audio.bang(this.pickUnseenSpot(2.5, 9), 0.8 + i * 0.6);
+        this.dread.kick(0.7, { static: 0.15 });
+        this.haptics.jolt('hard');
+        if (this.settings.captions) this.hud.showCaption('an impact against a wall');
+        break;
+
+      case 'breath':
+        this.audio.breath(2 + Math.floor(Math.random() * 3));
+        this.dread.kick(0.1);
+        if (this.settings.captions) this.hud.showCaption('breathing, at the ear');
+        break;
+
+      case 'blackout': {
+        const dur = 1.1 + i * 2.2;
+        this.dread.killLight(dur);
+        this.audio.staticBurst(0.3);
+        this.audio.subDrop(dur);
+        // the light comes back on something that was not there when it went out
+        window.setTimeout(() => {
+          if (this.state !== 'play') return;
+          this.overlay.flashFace({ ms: 70, fill: 1.3, static: 0.4 });
+          this.audio.stinger(1);
+          this.dread.kick(1, { flash: 0.8 });
+          this.haptics.jolt('contact');
+        }, dur * 1000);
+        break;
+      }
+
+      case 'word':
+        this.overlay.stabWord(DREAD_WORDS[Math.floor(Math.random() * DREAD_WORDS.length)], 900);
+        this.audio.whisper(2);
+        this.dread.kick(0.25, { static: 0.3 });
+        break;
+
+      case 'shadow': {
+        // something crosses the beam, just inside the light, and is gone
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        const at = new THREE.Vector3(this.player.pos.x, 0, this.player.pos.y).add(
+          fwd.multiplyScalar(3.2 + Math.random() * 2.5),
+        );
+        const p = this.presence;
+        if (p && p.enabled && p.state === 'gone') {
+          p.place(at, 'lurking');
+          window.setTimeout(() => p.banish(6, 14), 260 + Math.random() * 180);
+        }
+        this.audio.bang(at, 0.35);
+        this.dread.kick(0.4, { static: 0.25 });
+        break;
+      }
+
+      case 'headsnap': {
+        // you did not turn your head. something turned it.
+        const p = this.presence;
+        const to =
+          p && p.state !== 'gone'
+            ? Math.atan2(-(p.pos.x - this.player.pos.x), -(p.pos.z - this.player.pos.y))
+            : this.player.yaw + Math.PI * (0.55 + Math.random() * 0.9);
+        this.snap = { yaw: to, t: 0.3 };
+        this.audio.stinger(1);
+        this.dread.kick(0.9, { static: 0.4 });
+        this.haptics.jolt('hard');
+        break;
+      }
+
+      case 'lurch':
+        this.dread.dropFloor();
+        this.audio.subDrop(1.4);
+        this.audio.bang(undefined, 1.1);
+        this.haptics.jolt('hard');
+        break;
+    }
+  }
+
+  /** the first frame it is in view with nothing in the way */
+  private onSighting(distance: number) {
+    if (this.state !== 'play') return;
+    const near = Math.max(0, Math.min(1, 1 - distance / 22));
+    this.audio.stinger(0.4 + near * 0.6);
+    this.dread.kick(0.35 + near * 0.7, { static: 0.3 + near * 0.4 });
+    this.haptics.jolt(near > 0.5 ? 'hard' : 'small');
+    if (this.settings.captions) {
+      this.hud.showCaption(`something is standing there — ${Math.round(distance)}m`);
+    }
+  }
+
+  /** it has arrived. there is still no game over; that is not the same as safe. */
+  private onContact() {
+    if (this.state !== 'play') return;
+    this.contactsThisFloor += 1;
+    const pos = this.presence
+      ? new THREE.Vector3(this.presence.pos.x, 1.6, this.presence.pos.z)
+      : undefined;
+    this.overlay.flashFace({ ms: 760, fill: 2.1, kind: 'scream', static: 0.35 });
+    this.overlay.flashWash('blood', 1600, 1);
+    this.audio.contact(pos);
+    this.dread.kick(1.4, { flash: 1, static: 1, red: 1 });
+    this.dread.killLight(2.6);
+    this.haptics.jolt('contact');
+    // the inspector is spun around by it, and it is not there when they land
+    this.snap = { yaw: this.player.yaw + Math.PI * (Math.random() > 0.5 ? 1 : -1), t: 0.45 };
+    window.setTimeout(() => {
+      if (this.state === 'play') this.hud.showToast('nothing was there. the record shows nothing.');
+    }, 2600);
+    // after the first arrival it stays away longer, so the floor can breathe
+    if (this.contactsThisFloor >= 2) this.presence?.banish(45, 70);
+  }
+
+  /** the director, the thing on the floor, and what they do to the frame */
+  private updateDread(dt: number) {
+    const built = this.built;
+    if (!built) return;
+    const playing = this.state === 'play' && !this.settingsUI.isOpen;
+    this.dread.suspended = !playing;
+
+    // one frustum per frame, built after the walk cycle has moved the camera:
+    // the presence's whole behaviour hangs off whether it is inside it
+    this.camera.updateMatrixWorld();
+    this.projScreen.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projScreen);
+
+    const p = this.presence;
+    if (p) {
+      const allowed = this.dread.presenceAllowed;
+      if (p.enabled && !allowed) p.banish(10, 20);
+      p.enabled = allowed;
+      if (allowed && playing && this.collide) {
+        p.update(dt, this.time, {
+          player: new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y),
+          frustum: this.frustum,
+          lineOfSight: (a, b) => this.lineOfSight(a, b),
+          collide: this.collide,
+          pickCell: (min, max) => this.pickCell(min, max),
+          intensity: this.dread.intensity,
+        });
+      }
+    }
+
+    this.dread.update(dt, {
+      depth: built.spec.floor,
+      attention: Math.min(1, this.attention),
+      presenceDistance: p && p.state !== 'gone' ? p.distance : Infinity,
+      presenceVisible: p?.seen ?? false,
+      speed: this.player.speed01,
+      documenting: this.documenting !== null,
+    });
+
+    this.applyDread(dt);
+
+    // the room lights go with the flashlight — a floor that only loses its
+    // torch still reads as a floor, and this must not
+    this.ambient.intensity = this.ambientBase * (0.22 + 0.78 * this.dread.frame.light);
+  }
+
+  /** camera + light + composite, all driven off the director's frame */
+  private applyDread(dt: number) {
+    const f = this.dread.frame;
+
+    // the building turning the inspector's head
+    if (this.snap) {
+      const step = Math.min(dt, this.snap.t);
+      const d = ((this.snap.yaw - this.player.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      this.player.yaw += d * (step / this.snap.t);
+      this.snap.t -= step;
+      if (this.snap.t <= 1e-4) this.snap = null;
+    }
+
+    // shake rides on top of whatever the walk cycle already did
+    this.camera.position.x += f.shakeX;
+    this.camera.position.y += f.shakeY;
+    this.camera.position.z += f.shakeZ;
+    this.camera.rotation.z = f.roll;
+    this.camera.rotation.y += f.jitterYaw;
+    this.camera.rotation.x += f.jitterPitch;
+
+    this.pipeline.setDread(f);
+  }
+
   // ---------------------------------------------------------------- update
 
   private update(dt: number) {
@@ -941,11 +1309,18 @@ export class Game {
     }
 
     if (this.collide) this.player.update(dt, this.collide);
+    // the director gets the camera after the walk cycle and before the light
+    this.updateDread(dt);
 
-    // documenting narrows the frame a breath — attention made physical
-    const fovTarget = this.documenting ? this.baseFov - 4 : this.baseFov;
+    // documenting narrows the frame a breath — attention made physical.
+    // The director's kick is added *after* the smoothing, so a shock snaps
+    // and the breath still eases.
+    const fovBase = this.documenting ? this.baseFov - 4 : this.baseFov;
+    if (this.fovSmooth <= 0) this.fovSmooth = fovBase;
+    this.fovSmooth += (fovBase - this.fovSmooth) * Math.min(1, dt * 6);
+    const fovTarget = this.fovSmooth + this.dread.frame.fovKick;
     if (Math.abs(this.camera.fov - fovTarget) > 0.01) {
-      this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 6);
+      this.camera.fov = fovTarget;
       this.camera.updateProjectionMatrix();
     }
 
@@ -963,7 +1338,9 @@ export class Game {
     // never a white bloom. iris-like: eases in and out.
     const aim = this.aimDistance(camPos, fwd);
     const dimTarget = this.flashBase * THREE.MathUtils.clamp(aim / 3.2, 0.25, 1);
-    this.flashlight.intensity += (dimTarget - this.flashlight.intensity) * Math.min(1, dt * 7);
+    this.flashSmooth += (dimTarget - this.flashSmooth) * Math.min(1, dt * 7);
+    // the iris eases; the fault does not. a flicker that fades is a dimmer.
+    this.flashlight.intensity = this.flashSmooth * this.dread.frame.light;
 
     // the frame the inspector is holding is the frame that is sharp
     const docT = this.documenting ? Math.min(1, this.documenting.t / DOC_TIME) : 0;
@@ -1108,6 +1485,30 @@ export class Game {
         this.pipeline.debugNoVolShadow = !on;
       },
       amendTargets: () => this.amendTargets,
+      dread: this.dread,
+      presence: () => this.presence,
+      /** hold a face on screen long enough for a slow capture to catch it */
+      overlayFace: (ms = 6000, fill = 1.2) => this.overlay.flashFace({ ms, fill, static: 0.5 }),
+      /** fire a specific scare on demand, for the contact sheet and the smoke */
+      scare: (kind: ScareKind, intensity = 1) => this.scare(kind, intensity),
+      /** put the presence somewhere the inspector can actually see it, and
+       *  turn the inspector to face it — the state under test is "in view" */
+      summon: (min = 4, max = 9) => {
+        const p = this.presence;
+        if (!p) return null;
+        const eye = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
+        let at: THREE.Vector3 | null = null;
+        for (let i = 0; i < 60 && !at; i++) {
+          const c = this.pickCell(min, max);
+          if (c && this.lineOfSight(eye, new THREE.Vector3(c.x, 2.1, c.z))) at = c;
+        }
+        if (!at) return null;
+        p.enabled = true;
+        p.place(at, 'lurking');
+        this.player.yaw = Math.atan2(-(at.x - this.player.pos.x), -(at.z - this.player.pos.y));
+        this.player.pitch = 0;
+        return { x: +at.x.toFixed(2), z: +at.z.toFixed(2) };
+      },
       depart: () => {
         if (this.built) {
           const el = this.built.grid.elevator;

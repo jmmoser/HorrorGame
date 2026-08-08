@@ -5,6 +5,8 @@
 // So: a conservative auto-detected tier, an explicit override, and a resolution
 // governor that gives back pixels before it gives back frames.
 
+import type { DreadLevel } from '../core/dread';
+
 export type QualityTier = 'low' | 'medium' | 'high' | 'ultra';
 
 export interface QualityProfile {
@@ -166,6 +168,14 @@ export interface Settings {
   /** print sound events as text — the audio is half the game */
   captions: boolean;
   showFps: boolean;
+  /**
+   * How hard the building comes at you. 'nightmare' is the default and the
+   * intended experience: a presence on every floor, a scare every couple of
+   * seconds, and a frame that never settles. 'off' restores the original
+   * inspection — no entity, no stingers, no flashes — for players who want
+   * the slow version, and for anyone who cannot safely take the strobing.
+   */
+  dread: DreadLevel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -180,6 +190,7 @@ export const DEFAULT_SETTINGS: Settings = {
   haptics: true,
   captions: false,
   showFps: false,
+  dread: 'nightmare',
 };
 
 const KEY = 'descent-ledger-settings-v1';

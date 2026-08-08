@@ -5,9 +5,18 @@ import type { Rng } from '../core/rng';
 // The entire soundscape is synthesized: room tone, ventilation, a sub-bass
 // drone that thickens with depth, footsteps, and sourced "occupancy" events
 // that always come from somewhere the player cannot see — and stop if
-// approached. No files, no network, no sudden volume. Ever.
+// approached. No files, no network.
+//
+// The ambient half of that is unchanged and still never spikes. On top of it
+// now sits a second bus, `scare`, which does nothing but spike: screams,
+// impacts, breath at ear distance, the string stinger. It is the one place in
+// the mix with a fast attack, it is gated by the dread setting, and it is hard
+// limited — everything on it is scaled so a stack of simultaneous hits still
+// lands under the ceiling rather than clipping into a rattle.
 
 const MASTER_LEVEL = 0.6;
+/** ceiling for the scare bus, pre-master. loud against a 0.014 room tone. */
+const SCARE_LEVEL = 0.62;
 
 /** caption text per occupancy sound, in the register of the ledger itself */
 const OCCUPANCY_CAPTION: Record<'phone-ring' | 'chair-scrape' | 'knock' | 'below', string> = {
@@ -56,6 +65,8 @@ export class AudioEngine {
   /** everything sourced in the world goes through here: it is what gets a tail.
    *  The room tone, hum and drone bypass it — they are already the room. */
   private bus!: GainNode;
+  /** the only fast-attack path in the mix. gated by the dread setting. */
+  private scare!: GainNode;
   private convSpace!: ConvolverNode;
   private convCar!: ConvolverNode;
   private wetSpace!: GainNode;
@@ -74,6 +85,8 @@ export class AudioEngine {
   private attn = 0;
   private ducked = false;
   private masterVolume = 1;
+  /** 0 = the original quiet inspection, 1 = nightmare */
+  private dreadScale = 1;
   /** print sound events as text — the audio carries half the game */
   captions = false;
   /** called with a caption whenever a sound the player should notice happens */
@@ -106,6 +119,23 @@ export class AudioEngine {
     this.wetCar.gain.value = 0;
     this.bus.connect(this.convSpace).connect(this.wetSpace).connect(this.master);
     this.bus.connect(this.convCar).connect(this.wetCar).connect(this.master);
+
+    // The scare bus goes dry to the master *and* into the room's tail, so a
+    // scream in the archive stacks dies in the paper and the same scream in
+    // the lower lobby comes back at you for three seconds.
+    this.scare = ctx.createGain();
+    this.scare.gain.value = SCARE_LEVEL * this.dreadScale;
+    // a limiter on the way out: several scares can land on the same frame and
+    // the sum must not clip, because a clipped scream is a buzz and a buzz is
+    // funny
+    const squash = ctx.createDynamicsCompressor();
+    squash.threshold.value = -12;
+    squash.knee.value = 6;
+    squash.ratio.value = 12;
+    squash.attack.value = 0.002;
+    squash.release.value = 0.18;
+    this.scare.connect(squash).connect(this.master);
+    this.scare.connect(this.convSpace);
 
     // shared noise buffer
     const len = ctx.sampleRate * 2;
@@ -222,6 +252,8 @@ export class AudioEngine {
     this.ramp(this.droneGain.gain, Math.min(0.05, 0.004 + depth * 0.006), 6);
     this.nextEventAt = performance.now() / 1000 + 20 + this.rng() * 30;
     this.stopSpots();
+    // a scare may have left the bus ducked when the floor changed under it
+    this.ramp(this.scare.gain, SCARE_LEVEL * this.dreadScale, 0.3);
     // the floor's own tail — offices are dead, the lower lobby is not
     const space = SPACES[spec.palette];
     this.convSpace.buffer = this.makeImpulse(space);
@@ -240,6 +272,8 @@ export class AudioEngine {
     this.ducked = true;
     this.ramp(this.roomGain.gain, 0.004, 1.2);
     this.ramp(this.humGain.gain, 0.002, 1.2);
+    // the car is the one place nothing happens, and it has to stay that way
+    this.ramp(this.scare.gain, 0, 0.8);
     this.stopOccupancy();
     this.stopSpots();
   }
@@ -366,6 +400,299 @@ export class AudioEngine {
   quotaCue() {
     // the elevator remembering it exists: a distant, soft mechanical breath
     this.burst({ dur: 1.6, filter: 'lowpass', freq: 200, gain: 0.03, attack: 0.5 });
+  }
+
+  // ---------------------------------------------------------------- the bus
+  //
+  // Everything below is on the scare path. None of it obeys the slow-attack
+  // rule the rest of the engine was built around; that is the whole point of
+  // it being a separate bus with its own gate and its own limiter.
+
+  /** 0 = off, 1 = nightmare. scales every scare voice at the bus. */
+  setDreadScale(v: number) {
+    this.dreadScale = Math.max(0, Math.min(1, v));
+    if (this.ctx) this.ramp(this.scare.gain, SCARE_LEVEL * this.dreadScale, 0.1);
+  }
+
+  /** a place to send a scare so it comes from somewhere, not from the mix */
+  private scarePanner(pos: THREE.Vector3): PannerNode {
+    const p = this.makePanner(pos);
+    p.connect(this.scare);
+    // it is allowed to be loud from across the floor
+    p.rolloffFactor = 0.7;
+    p.refDistance = 3;
+    return p;
+  }
+
+  /**
+   * A throat that is the wrong size. Three detuned saws through a formant
+   * bandpass, pitch falling as it runs out of whatever it has instead of air,
+   * with a noise layer on top for the part that is not voice.
+   */
+  scream(intensity = 1, pos?: THREE.Vector3) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const out = pos ? this.scarePanner(pos) : this.scare;
+    const t = ctx.currentTime;
+    const dur = 1.1 + intensity * 1.5;
+    const base = 210 + Math.random() * 220;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.34 * (0.55 + intensity * 0.45), t + 0.035);
+    g.gain.setValueAtTime(0.30 * (0.55 + intensity * 0.45), t + dur * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.0002, t + dur);
+
+    // the formant: a mouth held open at one shape for far too long
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = 900 + Math.random() * 500;
+    f1.Q.value = 3.5;
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'peaking';
+    f2.frequency.value = 2400;
+    f2.gain.value = 12;
+    f2.Q.value = 2;
+
+    const oscs: OscillatorNode[] = [];
+    for (const detune of [0, 17, -23]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.detune.value = detune;
+      o.frequency.setValueAtTime(base * 1.9, t);
+      o.frequency.exponentialRampToValueAtTime(base * 2.35, t + 0.09);
+      o.frequency.exponentialRampToValueAtTime(base * 0.62, t + dur);
+      o.connect(f1);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+      oscs.push(o);
+    }
+    // vocal tremor, uneven
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 5.5 + Math.random() * 4;
+    const lfoG = ctx.createGain();
+    lfoG.gain.value = 34;
+    lfo.connect(lfoG);
+    oscs.forEach((o) => lfoG.connect(o.detune));
+    lfo.start(t);
+    lfo.stop(t + dur + 0.05);
+
+    f1.connect(f2).connect(g).connect(out);
+
+    // the rasp
+    const n = ctx.createBufferSource();
+    n.buffer = this.noiseBuf;
+    n.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'bandpass';
+    nf.frequency.setValueAtTime(1800, t);
+    nf.frequency.exponentialRampToValueAtTime(600, t + dur);
+    nf.Q.value = 1.1;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(0.13 * intensity, t + 0.05);
+    ng.gain.exponentialRampToValueAtTime(0.0002, t + dur * 0.9);
+    n.connect(nf).connect(ng).connect(out);
+    n.start(t, Math.random() * 1.5);
+    n.stop(t + dur + 0.05);
+
+    if (pos) setTimeout(() => out.disconnect(), (dur + 0.4) * 1000);
+  }
+
+  /**
+   * The string stinger. Not a chord — a cluster a semitone wide, bowed hard,
+   * sliding up. It is the oldest trick in the file and it has never once
+   * stopped working.
+   */
+  stinger(intensity = 1) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const dur = 0.85 + intensity * 0.5;
+    const root = 520 + Math.random() * 180;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.26 * (0.5 + intensity * 0.5), t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0002, t + dur);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 300;
+    hp.connect(g).connect(this.scare);
+    for (const mult of [1, 1.0595, 1.122, 2.0, 2.997]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(root * mult, t);
+      o.frequency.linearRampToValueAtTime(root * mult * 1.16, t + dur * 0.8);
+      o.connect(hp);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+    }
+  }
+
+  /** a body-weight impact on the other side of something */
+  bang(pos?: THREE.Vector3, force = 1) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const out = pos ? this.scarePanner(pos) : this.scare;
+    const t = ctx.currentTime;
+    // the thud
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150 * force, t);
+    o.frequency.exponentialRampToValueAtTime(32, t + 0.28);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.44 * force, t);
+    og.gain.exponentialRampToValueAtTime(0.0002, t + 0.5);
+    o.connect(og).connect(out);
+    o.start(t);
+    o.stop(t + 0.55);
+    // the crack of whatever it hit
+    this.burst({ dur: 0.22, filter: 'bandpass', freq: 1400, q: 1.2, gain: 0.3 * force, attack: 0.001, out });
+    if (pos) setTimeout(() => out.disconnect(), 1200);
+  }
+
+  /**
+   * Words at ear distance. No panner — this one is *inside* the headphones,
+   * which is the difference between a sound in the building and a sound in
+   * your head. Sibilance and formants, no pitch: it should be almost, but
+   * never quite, a sentence.
+   */
+  whisper(syllables = 4) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    // hard left or hard right — beside you, never in front
+    const side = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (side) {
+      side.pan.value = Math.random() > 0.5 ? 0.85 : -0.85;
+      side.connect(this.scare);
+    }
+    const out: AudioNode = side ?? this.scare;
+    let at = ctx.currentTime + 0.02;
+    for (let i = 0; i < syllables; i++) {
+      const dur = 0.09 + Math.random() * 0.13;
+      const n = ctx.createBufferSource();
+      n.buffer = this.noiseBuf;
+      n.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      // vowel-ish formants, drifting
+      f.frequency.setValueAtTime(480 + Math.random() * 900, at);
+      f.frequency.linearRampToValueAtTime(380 + Math.random() * 1500, at + dur);
+      f.Q.value = 5 + Math.random() * 6;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 260;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(0.16 + Math.random() * 0.1, at + dur * 0.35);
+      g.gain.exponentialRampToValueAtTime(0.0002, at + dur);
+      n.connect(f).connect(hp).connect(g).connect(out);
+      n.start(at, Math.random() * 1.5);
+      n.stop(at + dur + 0.03);
+      at += dur + 0.02 + Math.random() * 0.09;
+    }
+    if (side) setTimeout(() => side.disconnect(), (at - ctx.currentTime + 0.5) * 1000);
+  }
+
+  /**
+   * Breathing, close, keeping time with nothing. The last one is always cut
+   * short — it is the stopping that does the work, not the breathing.
+   */
+  breath(count = 3) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    let at = ctx.currentTime + 0.05;
+    for (let i = 0; i < count; i++) {
+      const last = i === count - 1;
+      const inh = 0.42 + Math.random() * 0.16;
+      const n = ctx.createBufferSource();
+      n.buffer = this.noiseBuf;
+      n.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.setValueAtTime(420, at);
+      f.frequency.linearRampToValueAtTime(1150, at + inh);
+      f.Q.value = 0.9;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(last ? 0.2 : 0.13, at + inh * 0.6);
+      // cut, not fade
+      g.gain.exponentialRampToValueAtTime(0.0002, at + inh * (last ? 0.66 : 1));
+      n.connect(f).connect(g).connect(this.scare);
+      n.start(at, Math.random() * 1.5);
+      n.stop(at + inh + 0.05);
+      at += inh + 0.34 + Math.random() * 0.12;
+    }
+  }
+
+  /** the frame losing signal */
+  staticBurst(dur = 0.16) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    this.burst({ dur, filter: 'highpass', freq: 900, gain: 0.26, attack: 0.001, out: this.scare });
+    this.burst({ dur: dur * 0.6, filter: 'bandpass', freq: 60, q: 1, gain: 0.3, attack: 0.001, out: this.scare });
+  }
+
+  /** the floor falling out from under the mix */
+  subDrop(dur = 1.6) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(21, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0002, t + dur);
+    o.connect(g).connect(this.scare);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
+  /** one beat of the thing in your chest. two thumps, the second smaller. */
+  heartbeat(intensity: number) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    const ctx = this.ctx;
+    const level = 0.09 + intensity * 0.22;
+    const thump = (at: number, gain: number) => {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(74, at);
+      o.frequency.exponentialRampToValueAtTime(38, at + 0.16);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(gain, at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0002, at + 0.22);
+      o.connect(g).connect(this.scare);
+      o.start(at);
+      o.stop(at + 0.26);
+    };
+    const t = ctx.currentTime;
+    thump(t, level);
+    thump(t + 0.19 - intensity * 0.05, level * 0.62);
+  }
+
+  /** it has reached you. everything at once, and then nothing. */
+  contact(pos?: THREE.Vector3) {
+    if (!this.ctx || this.dreadScale <= 0) return;
+    this.scream(1, pos);
+    this.stinger(1);
+    this.bang(pos, 1.3);
+    this.subDrop(2.2);
+    this.staticBurst(0.4);
+    // and then the room is suddenly, wrongly, empty
+    setTimeout(() => this.duckScare(1.6), 900);
+  }
+
+  /** pull the scare bus down for a moment — silence right after noise */
+  private duckScare(seconds: number) {
+    if (!this.ctx) return;
+    const target = SCARE_LEVEL * this.dreadScale;
+    this.ramp(this.scare.gain, target * 0.08, 0.1);
+    setTimeout(() => {
+      if (this.ctx) this.ramp(this.scare.gain, target, 0.6);
+    }, seconds * 1000);
   }
 
   // ----------------------------------------------------------- positional

@@ -474,6 +474,63 @@ body {
   background: rgba(216, 210, 196, 0.22);
 }
 
+/* ---------- the layer above the building ----------
+   Sits over the world, the HUD and the open ledger (so a face lands on the
+   page you are reading), and under the fader and the settings form (so the
+   inspection can still be paused and turned down). Nothing here is
+   interactive; nothing here transitions in. */
+#dread {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#dread-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  /* no transition: a face that fades in is a photograph, not a fright */
+  transition: none;
+}
+
+#dread-wash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: rgba(96, 6, 8, 0.62);
+  mix-blend-mode: multiply;
+}
+
+#dread-word {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: clamp(2.2rem, 11vw, 7rem);
+  letter-spacing: 0.14em;
+  color: #d8d2c4;
+  text-shadow: 0 0 26px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+/* the whole frame kicks when a face lands */
+#dread.on {
+  animation: dread-kick 90ms steps(2, end);
+}
+
+@keyframes dread-kick {
+  0% { transform: translate(0, 0) scale(1.02); }
+  50% { transform: translate(-6px, 4px) scale(1.05); }
+  100% { transform: translate(3px, -2px) scale(1); }
+}
+
 /* ---------- fader ---------- */
 #fader {
   position: fixed;

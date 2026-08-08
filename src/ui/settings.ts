@@ -17,7 +17,25 @@ interface Section {
 
 const SECTIONS: Section[] = [
   {
-    title: 'I · IMAGE',
+    title: 'I · EXPOSURE',
+    fields: [
+      {
+        kind: 'choice',
+        key: 'dread',
+        label: 'exposure',
+        note: 'how much of the building is permitted to reach the inspector. ' +
+          'severe and above include sudden images, loud sound and flashing.',
+        options: [
+          { value: 'nightmare', label: 'unrestricted' },
+          { value: 'severe', label: 'severe' },
+          { value: 'unsettling', label: 'limited' },
+          { value: 'off', label: 'survey only' },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'II · IMAGE',
     fields: [
       {
         kind: 'choice',
@@ -48,7 +66,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
-    title: 'II · CONTROL',
+    title: 'III · CONTROL',
     fields: [
       {
         kind: 'range',
@@ -73,7 +91,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
-    title: 'III · COMFORT',
+    title: 'IV · COMFORT',
     fields: [
       {
         kind: 'range',
