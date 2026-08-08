@@ -394,6 +394,14 @@ export class Pipeline {
         dofStrength: { value: 0 },
         focusDistance: { value: 2 },
         focusRange: { value: 4 },
+        dWarp: { value: 0 },
+        dShake: { value: new THREE.Vector2() },
+        dStatic: { value: 0 },
+        dRed: { value: 0 },
+        dFlash: { value: 0 },
+        dCa: { value: 0 },
+        dDark: { value: 0 },
+        dPulse: { value: 0 },
       },
       defines,
     );
@@ -548,6 +556,32 @@ export class Pipeline {
     u.dofStrength.value = this.profile.dof ? strength : 0;
     u.focusDistance.value = focusDistance;
     u.focusRange.value = focusRange;
+  }
+
+  /**
+   * The director's frame. Everything here is additive on top of the grade and
+   * the lens, so with dread off the composite is bit-for-bit what it was.
+   */
+  setDread(d: {
+    warp: number;
+    shakeX: number;
+    shakeY: number;
+    staticAmt: number;
+    red: number;
+    flash: number;
+    ca: number;
+    dark: number;
+    pulse: number;
+  }) {
+    const u = this.matComposite.uniforms;
+    u.dWarp.value = d.warp;
+    (u.dShake.value as THREE.Vector2).set(d.shakeX, d.shakeY);
+    u.dStatic.value = d.staticAmt;
+    u.dRed.value = d.red;
+    u.dFlash.value = d.flash;
+    u.dCa.value = d.ca;
+    u.dDark.value = d.dark;
+    u.dPulse.value = d.pulse;
   }
 
   setFilmEffects(on: boolean) {

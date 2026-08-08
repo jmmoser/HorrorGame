@@ -115,6 +115,15 @@
       <div id="look-zone"></div>
     </div>
 
+    <!-- Above the building, not in it: faces across the whole frame, signal
+         loss, blood, and the word the building writes on the inside of the
+         lens. Kept in the DOM so it can land on the very next frame. -->
+    <div id="dread" aria-hidden="true">
+      <canvas id="dread-canvas"></canvas>
+      <div id="dread-wash"></div>
+      <div id="dread-word"></div>
+    </div>
+
     <div id="fader"></div>
 
     <script type="module" src="/src/main.ts"></script>

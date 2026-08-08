@@ -33,6 +33,22 @@ export class Haptics {
     this.timer = window.setTimeout(beat, 1000);
   }
 
+  /** a scare landing: not the heartbeat, and not faint */
+  jolt(strength: 'small' | 'hard' | 'contact' = 'small') {
+    if (!this.supported || !this.enabled || document.hidden) return;
+    const pattern =
+      strength === 'contact'
+        ? [40, 30, 60, 30, 240]
+        : strength === 'hard'
+          ? [30, 40, 90]
+          : [24];
+    try {
+      navigator.vibrate(pattern);
+    } catch {
+      this.enabled = false;
+    }
+  }
+
   stop() {
     if (this.timer !== null) {
       clearTimeout(this.timer);

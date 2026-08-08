@@ -427,6 +427,17 @@ export const COMPOSITE_FRAG = /* glsl */ `
   uniform float focusDistance;
   uniform float focusRange;
 
+  // --- the director's frame. everything below is zero when dread is off, and
+  // the shader collapses back to the quiet inspection it used to be.
+  uniform float dWarp;    // barrel breathing
+  uniform vec2  dShake;   // screen slide, on top of the camera's own
+  uniform float dStatic;  // signal loss: noise, tearing, dropped lines
+  uniform float dRed;     // how much of the frame has gone to blood
+  uniform float dFlash;   // an inverted stab, decays in a few frames
+  uniform float dCa;      // extra channel separation
+  uniform float dDark;    // the vignette closing
+  uniform float dPulse;   // heartbeat, felt in the lens
+
   in vec2 vUv;
   layout(location = 0) out vec4 fragColor;
 
@@ -454,10 +465,38 @@ export const COMPOSITE_FRAG = /* glsl */ `
   void main() {
     vec2 uv = vUv;
 
+    // --- the lens stops being a lens ------------------------------------
+    // A barrel/pinch that breathes on the heartbeat, a slide, and — when the
+    // signal goes — whole scanlines torn sideways out of alignment.
+    vec2 fc0 = uv - 0.5;
+    float rr = dot(fc0, fc0);
+    float squeeze = dWarp * 1.6 + dPulse * 0.09;
+    // One guard around the whole block, so with dread off nothing here runs
+    // at all — not even the edge clamp, which would otherwise pull the
+    // outermost column half a texel inward on a wide buffer.
+    if (squeeze > 0.0 || dShake != vec2(0.0) || dStatic > 0.0) {
+      uv = 0.5 + fc0 * (1.0 - squeeze * (0.35 + rr * 1.8));
+      uv += dShake;
+
+      // tearing has a knee: below it the signal is merely noisy, above it the
+      // frame comes apart in bands
+      float tear = smoothstep(0.07, 0.55, dStatic);
+      if (tear > 0.001) {
+        float band = floor(uv.y * 96.0);
+        float jump = ign(vec2(band, floor(time * 24.0))) - 0.5;
+        // most lines hold; a few are gone entirely
+        float torn = step(0.82 - tear * 0.35, ign(vec2(band * 1.7, floor(time * 17.0))));
+        uv.x += jump * tear * 0.11 * torn;
+        uv.y += (ign(vec2(floor(time * 31.0), 3.0)) - 0.5) * tear * 0.014;
+      }
+      uv = clamp(uv, vec2(0.0005), vec2(0.9995));
+    }
+
     // --- lens: sample the scene three times, once per channel, off-axis
     vec2 fromCenter = uv - 0.5;
     float r2 = dot(fromCenter, fromCenter);
-    vec2 caOff = fromCenter * aberration * (1.0 + r2 * 4.0);
+    // dread aberration is additive, so it still lands with film effects off
+    vec2 caOff = fromCenter * (aberration + dCa * 0.0055) * (1.0 + r2 * 4.0);
 
     vec3 col;
     col.r = texture(tDiffuse, uv + caOff).r;
@@ -498,12 +537,45 @@ export const COMPOSITE_FRAG = /* glsl */ `
     col *= mix(shadowTint, highlightTint, smoothstep(0.15, 0.75, luma));
     col = mix(vec3(luma), col, saturation);
 
+    // --- what is left of it -----------------------------------------------
+    // Blood first, because it has to survive the vignette: the frame does not
+    // go red so much as it stops being able to see anything that is not.
+    if (dRed > 0.001) {
+      float centred = 1.0 - smoothstep(0.0, 0.42, rr);
+      vec3 bled = vec3(luma * 1.35 + 0.06, luma * 0.10, luma * 0.09);
+      col = mix(col, bled, clamp(dRed * (0.45 + centred * 0.85), 0.0, 1.0));
+    }
+
     // --- lens, part two
     float vig = 1.0 - smoothstep(0.15, 0.85, r2 * (1.6 + vignette));
     col *= mix(1.0, vig, vignette + 0.15);
 
+    // the vignette closing on the heartbeat — the edges of a faint
+    float close = dDark + dPulse * 0.22;
+    if (close > 0.001) {
+      float tunnel = 1.0 - smoothstep(0.04, 0.30 + close * 0.02, rr * (1.0 + close * 3.4));
+      col *= mix(1.0, tunnel, clamp(close, 0.0, 0.96));
+    }
+
     float g = (ign(gl_FragCoord.xy + time * 71.31) - 0.5) * grain;
     col += g * (1.0 - luma * 0.5);
+
+    // signal noise sits on top of the grade, because it is the frame failing,
+    // not the room
+    if (dStatic > 0.001) {
+      float n = ign(gl_FragCoord.xy * 1.7 + time * 733.1);
+      float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 2.1 + time * 62.0);
+      col = mix(col, vec3(n), dStatic * 0.34);
+      // the scanline dip is squared, so the resting level does not lay a
+      // permanent moiré over the whole building
+      col *= 1.0 - dStatic * dStatic * 1.6 * scan;
+    }
+
+    // the stab: for two or three frames the frame is its own negative
+    if (dFlash > 0.001) {
+      col = mix(col, vec3(1.0) - col, clamp(dFlash, 0.0, 1.0));
+      col += dFlash * 0.28;
+    }
 
     fragColor = vec4(linearToSRGB(max(col, 0.0)), 1.0);
   }
