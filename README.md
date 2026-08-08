@@ -24,6 +24,21 @@ Still no death, and still no fail state. The slow, compounding wrongness of
 beautiful empty spaces is all still here and still does most of the work —
 the difference is that the building has stopped waiting for you to notice.
 
+**And it has started watching back.** The previous build's answer to "make it
+worse" was rate: something landed every one to three seconds. That is the one
+change that reliably makes a horror game *less* frightening — a shock every two
+seconds is a metronome, and you can stand inside a metronome. Players stopped
+flinching before the end of the first floor.
+
+So the escalation was moved somewhere it compounds instead of wearing out. The
+building now runs a **cycle** rather than a timer, it **holds its breath**
+before most of what it does and about a quarter of the time that breath
+resolves into nothing at all, and it **keeps a score of what actually works on
+you** — measured off your own hands, in the two seconds after each shock — and
+reaches for that. There are fewer events per minute than the build before it
+and it is substantially harder to sit through, because the quiet is no longer
+time off.
+
 ## The vertical slice (this build)
 
 - **Five hand-authored floors**, one controlled palette each: fluorescent
@@ -71,14 +86,72 @@ the difference is that the building has stopped waiting for you to notice.
   obeying, creeps while you watch, and eventually simply runs at you. Reaching
   you is not a death — it is an arrival: the whole frame becomes its face, and
   then there is nothing there and the ledger says there never was.
-- **The director.** A per-floor intensity — depth, attention, how long you
-  have been on this floor, how close the thing is — spent continuously on
-  twelve kinds of shock: subliminal face flashes, held faces, signal loss,
+  Three things changed when the building stopped being polite. It no longer
+  walks at where you *are* but at where you are going to be, which is why
+  corners stopped working and why it is sometimes already at the far end of
+  the corridor you were about to turn into. When it moves unseen it can now
+  choose the bearing you are not covering rather than merely a nearer one.
+  And when you stop to document something, **it stops too, and raises its
+  hands to the same height as yours, and holds them there** — whatever else it
+  is doing on this floor, it is also keeping a record. How long it stays gone
+  after an arrival collapses with depth: early on, reaching you costs it the
+  rest of the corridor; deep in, it is back before your hands have stopped.
+- **The building writes in your ledger, about you.** Entries appear in the
+  inspector's own record, in the inspector's own format, numbered in the
+  inspector's own sequence — struck through the page by something with a
+  platen instead of a pencil. They are about the person playing: that they
+  have stopped in the corridor and are listening, and for how many seconds;
+  that they have checked behind themselves four times on this floor and were
+  right to once; that they are reading this entry, and have read it twice.
+  They carry the time on your actual wall, and some of them are stamped from
+  further along the clock than you have got to. When the watcher is confident,
+  one of them tells you what it has worked out about you — *"the inspector is
+  afraid of the dark. the building has a great deal of it."* It is the
+  cheapest system in the build and the only one that cannot be dismissed as
+  something that happened to the character, because the character does not
+  have a clock and you do.
+- **The car is no longer safe.** Four floors of descending have taught you
+  that nothing happens in the elevator. Below floor three that stops being
+  true: sealed in a metal box, in the dark, frozen, with the doors shut, and
+  something breathing in it with you.
+- **The director, as a cycle.** A per-floor intensity — depth, attention, how
+  long you have been on this floor, how close the thing is — spent on sixteen
+  kinds of shock, but spent in a shape rather than at a rate:
+  **stalk** (ordinary time) → **tell** → **strike** → **void**. Twelve of the
+  sixteen are the loud ones: subliminal face flashes, held faces, signal loss,
   whispers at ear distance, screams sourced behind walls, body-weight impacts,
   breathing that stops mid-breath, blackouts that end on a face, words written
   across the lens, shapes crossing the beam, your head being turned for you,
-  and the floor dropping a metre. At `unrestricted` the gap between them is
-  one to three seconds and never widens.
+  and the floor dropping a metre. At high intensity a strike is sometimes a
+  **volley** — three or four inside a single second — instead of one thing.
+- **The held breath.** Before most strikes the building stops. The room tone,
+  the ventilation and the descent drone — the three sounds that have run
+  without interruption since you put the headphones on — withdraw together;
+  the flashlight's bad connection stops for the first time since you arrived;
+  the camera's permanent sway goes flat. What is left is a tone under hearing
+  and your own pulse, rising for anything from three to ten seconds. **About a
+  quarter of them resolve into nothing at all.** That dry one is the most
+  valuable event in the build: after the third, the held breath stops being a
+  warning and becomes somewhere you have to live.
+- **The four quiet scares.** None of these announce themselves, and between
+  them they are why the loud twelve still work on floor four. **Follow** —
+  footsteps behind you in your own rhythm, taking one more step than you did.
+  **Stare** — it is placed, silently, on the one bearing you are not covering,
+  and then nothing happens; you spring this one yourself, on your own
+  schedule, by deciding to turn around, and some players never do. **Closer** —
+  the room quietly gets smaller, with no sound whatsoever. **Observed** —
+  see below.
+- **The watcher.** The building measures what you actually do with your hands
+  in the two seconds after every shock: how far you spun, how fast the first
+  movement was, whether you stopped dead, whether you ran. It keeps a running
+  score per kind of scare, and it uses it twice. Selection is weighted toward
+  what has demonstrably worked on *you*, and once the model is confident the
+  building starts reaching for your worst one on purpose. And pacing runs off
+  the same model backwards: when the score says you have settled, it strikes
+  sooner; when it says you are already frightened, it **waits**, because a
+  frightened player spends the wait frightening themselves and is better at it
+  than the director is. Nothing is transmitted anywhere; it lives in memory for
+  one session.
 - **A frame that never settles.** The composite gained a second half: barrel
   warp breathing on a heartbeat, screen slide, VHS tearing in torn bands,
   channel separation, a blood wash that survives the vignette, a tunnel
@@ -90,7 +163,10 @@ the difference is that the building has stopped waiting for you to notice.
   clusters, impacts, hard-panned whispers, breath, sub drops, a heartbeat that
   quickens with intensity. It is hard-limited so a stack of simultaneous hits
   lands under the ceiling instead of clipping, it runs through the floor's own
-  reverb, and it is gated to silence by the exposure setting.
+  reverb, and it is gated to silence by the exposure setting. The ambient bed
+  gained the opposite move: during a held breath its three permanent voices
+  ramp away together and come back by degrees, so you are never handed a moment
+  where it is plainly over.
 - **Notices.** Pinned paper — a lettings suspension, a tenant's note, a
   retrieval slip for the building's own file — can be read and transcribed
   into the ledger.
@@ -174,10 +250,13 @@ software rendering is slow, so it takes a few minutes.)
 ```
 src/
   core/        types, seeded RNG (mulberry32 + per-floor streams), save
-    dread.ts   the escalation director: intensity, scheduling, the frame it
-               hands to the camera and the composite
+    dread.ts   the escalation director: intensity, the stalk/tell/strike/void
+               cycle, and the frame it hands to the camera and the composite
+    watcher.ts the model of the person playing — what they flinch at, measured
+               off their own hands, and how settled they have become
   world/
     presence.ts the figure — geometry, the observation rule, and how it breaks
+    observations.ts the building's own ledger, whose only subject is you
     faces.ts   procedurally drawn faces, for the head and for the whole screen
     specs.ts   the five floors: ASCII maps + anchors + discrepancy pools
     grid.ts    map parsing, collision queries, authoring validation,
@@ -298,9 +377,9 @@ than constraints, and the honest summary is:
 
 | | `unrestricted` (default) | `survey only` |
 |---|---|---|
-| jump scares | every 1–3 seconds | none |
+| jump scares | a cycle, ~8–15s, sometimes four at once | none |
 | volume spikes | a dedicated, limited scare bus | none — every sound slow-attack |
-| entity | one per floor, stalking | none |
+| entity | one per floor, intercepting | none |
 | chase | it runs at you above half intensity | none |
 | game-over | **still none** | still none |
 | explanations | **still none** | still none |
@@ -313,7 +392,9 @@ does not stop, and the counter keeps counting.
 
 `survey only` is not a degraded mode, it is the original build: every dread
 uniform is zero and the composite's whole second half is branched over, the
-scare bus is gated to silence *and* every voice on it early-returns, and the
-figure never enters the frame. It exists because the slow
+scare bus is gated to silence *and* every voice on it early-returns, the
+director's cycle never advances so nothing is ever scheduled, the watcher is
+wiped and never sampled, nothing is ever written in your ledger that you did
+not write, and the figure never enters the frame. It exists because the slow
 version is a real game that some people will prefer, and because rapid
 flashing is a medical issue rather than a taste one.

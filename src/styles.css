@@ -391,6 +391,24 @@ body {
   font-style: italic;
 }
 
+/* Entries the inspector did not write. Everything else in the ledger is
+   pencil; this is struck through the page by something with a platen — dark,
+   even, pressed hard enough to sit slightly below the paper. It is numbered in
+   the inspector's own sequence, which is the part that should not be possible. */
+.entry.entry-observed {
+  color: #14120e;
+  background: linear-gradient(90deg, rgba(28, 24, 18, 0.07), rgba(28, 24, 18, 0.015));
+  border-left: 2px solid rgba(20, 18, 14, 0.55);
+  padding-left: 0.5rem;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 1px rgba(20, 18, 14, 0.35);
+}
+
+.entry.entry-observed .entry-meta {
+  color: #2c281f;
+  font-weight: 700;
+}
+
 /* the ruled-off line closing out a floor */
 .entry-filed {
   padding: 0.5rem 0.1rem;

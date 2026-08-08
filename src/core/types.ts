@@ -133,7 +133,7 @@ export interface FloorSpec {
   ceilingHeight: number;
 }
 
-export type EntryKind = 'discrepancy' | 'mundane' | 'amend' | 'notice' | 'filed';
+export type EntryKind = 'discrepancy' | 'mundane' | 'amend' | 'notice' | 'filed' | 'observed';
 
 export interface LedgerEntry {
   id: string;
