@@ -146,9 +146,13 @@ const ZERO: DreadFrame = {
 };
 
 /** weight, and the minimum seconds before the same thing may happen again */
+// 'face' and 'face-hold' are deliberately absent: a screen-filling picture of
+// a face is the building doing the frightening *to* the player instead of
+// letting them find it, and it reads as a pop-up ad after the second one. The
+// kinds still exist for the debug contact sheet; the director never deals
+// them. What the player is meant to see is the figure — standing at the end
+// of a corridor, at a distance, on their own screen time.
 const SCARES: Array<{ kind: ScareKind; weight: number; cooldown: number; minIntensity: number }> = [
-  { kind: 'face', weight: 11, cooldown: 12, minIntensity: 0 },
-  { kind: 'face-hold', weight: 7, cooldown: 42, minIntensity: 0.45 },
   { kind: 'static', weight: 9, cooldown: 7, minIntensity: 0 },
   { kind: 'whisper', weight: 14, cooldown: 8, minIntensity: 0 },
   { kind: 'scream', weight: 10, cooldown: 15, minIntensity: 0.25 },
@@ -168,7 +172,7 @@ const SCARES: Array<{ kind: ScareKind; weight: number; cooldown: number; minInte
 ];
 
 /** kinds that must never be stacked into a volley — they need their own air */
-const NEVER_IN_VOLLEY: ScareKind[] = ['stare', 'observed', 'closer', 'follow', 'face-hold'];
+const NEVER_IN_VOLLEY: ScareKind[] = ['stare', 'observed', 'closer', 'follow'];
 
 export class Dread {
   level: DreadLevel = 'nightmare';
