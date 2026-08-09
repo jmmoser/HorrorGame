@@ -235,8 +235,10 @@ export class Presence {
     this.face.rotation.y = 0;
 
     if (this.state === 'lurking') {
-      // it waits to be found. once found, it stops waiting.
-      if (this.seenFor > 1.1 - i * 0.7 || this.stateT > 16 - i * 9) {
+      // It waits to be found, and being found is the scene: a figure at the
+      // end of a sightline, holding still, long enough to be sure of what it
+      // is. Only after the player has had that look does it stop waiting.
+      if (this.seenFor > 2.8 - i * 1.3 || this.stateT > 20 - i * 9) {
         this.state = 'stalking';
         this.stateT = 0;
       }

@@ -722,11 +722,10 @@ export class Game {
     else if (hit.kind === 'notice') this.logNotice(hit.target);
     else if (hit.kind === 'amend') this.logAmend(hit.target);
     // The pencil coming off the page was always the building's favourite
-    // moment to make a sound. Sometimes it does not settle for a sound — but
-    // only sometimes: documentation is the loop the player lives in, and a
-    // face on most pencil-lifts turns the scare into a filing fee.
+    // moment to make a sound. A sound is all it gets: documentation is the
+    // loop the player lives in, and anything louder here becomes a filing fee.
     if (Math.random() < 0.12 + this.dread.intensity * 0.25) {
-      this.scare(Math.random() < 0.35 ? 'face' : 'breath', this.dread.intensity);
+      this.scare(Math.random() < 0.3 ? 'whisper' : 'breath', this.dread.intensity);
     }
   }
 
@@ -1099,13 +1098,27 @@ export class Game {
         this.dread.killLight(dur);
         this.audio.staticBurst(0.3);
         this.audio.subDrop(dur);
-        // the light comes back on something that was not there when it went out
+        // The light comes back on something that was not there when it went
+        // out — the figure itself, down the beam, not a picture of one. It is
+        // simply standing there when the filament warms; the sighting logic
+        // provides the sting the moment the player registers it.
         window.setTimeout(() => {
           if (this.state !== 'play') return;
-          this.overlay.flashFace({ ms: 70, fill: 1.3, static: 0.4 });
-          this.audio.stinger(1);
-          this.dread.kick(1, { flash: 0.8 });
-          this.haptics.jolt('contact');
+          const p = this.presence;
+          if (p && p.enabled && p.state === 'gone' && this.collide) {
+            const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+            const eye = new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.y);
+            for (let d = 9.5; d >= 4.5; d -= 1.2) {
+              const x = this.player.pos.x + fwd.x * d;
+              const z = this.player.pos.y + fwd.z * d;
+              const hit = this.collide(x, z, 0.3);
+              if (Math.hypot(hit.x - x, hit.z - z) > 0.02) continue;
+              if (!this.lineOfSight(eye, new THREE.Vector3(x, 1.9, z))) continue;
+              p.place(new THREE.Vector3(x, 0, z), 'lurking');
+              break;
+            }
+          }
+          this.dread.kick(0.5, { static: 0.45 });
         }, dur * 1000);
         break;
       }
@@ -1120,7 +1133,7 @@ export class Game {
         // something crosses the beam, just inside the light, and is gone
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const at = new THREE.Vector3(this.player.pos.x, 0, this.player.pos.y).add(
-          fwd.multiplyScalar(3.2 + Math.random() * 2.5),
+          fwd.multiplyScalar(5 + Math.random() * 3),
         );
         const p = this.presence;
         if (p && p.enabled && p.state === 'gone') {
@@ -1282,7 +1295,10 @@ export class Game {
     const pos = this.presence
       ? new THREE.Vector3(this.presence.pos.x, 1.6, this.presence.pos.z)
       : undefined;
-    this.overlay.flashFace({ ms: 760, fill: 2.1, kind: 'scream', static: 0.35 });
+    // No screen-filling face here either. The arrival is the light dying, the
+    // sound at zero distance, the head being turned for you, and blood in the
+    // frame — the figure was just *there*, which is worse than a picture.
+    this.overlay.flashStatic(240, 1);
     this.overlay.flashWash('blood', 1600, 1);
     this.audio.contact(pos);
     this.dread.kick(1.4, { flash: 1, static: 1, red: 1 });
