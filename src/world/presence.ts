@@ -41,6 +41,8 @@ export interface PresenceContext {
   playerVel: { x: number; z: number };
   /** true while the inspector is holding a frame. it holds one too. */
   documenting: boolean;
+  /** true while the frame being held is of the figure itself */
+  documentingIt: boolean;
 }
 
 const HEIGHT = 2.34;
@@ -57,6 +59,8 @@ export class Presence {
   seenFor = 0;
   /** metres, player to figure */
   distance = Infinity;
+  /** invisible raycast target the inspector can aim the ledger at */
+  readonly hit: THREE.Mesh;
 
   /** fired the first frame a hidden figure becomes visible */
   onSighting: ((distance: number) => void) | null = null;
@@ -159,14 +163,44 @@ export class Presence {
     this.face.renderOrder = 3;
     this.group.add(this.face);
 
+    // The thing can be documented. This is the whole box it can be aimed at:
+    // a person-shaped volume, a little generous, because the inspector's
+    // hands are not steady while they do it.
+    this.hit = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, HEIGHT + 0.2, 0.8),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+    );
+    this.hit.position.y = (HEIGHT + 0.2) / 2;
+    this.hit.name = 'hitbox';
+    this.group.add(this.hit);
+
     this.group.traverse((o) => {
       if (o instanceof THREE.Mesh) {
-        o.castShadow = o !== this.face;
+        o.castShadow = o !== this.face && o !== this.hit;
         o.receiveShadow = false;
       }
     });
     this.group.visible = false;
     this.timer = 8 + rng() * 10;
+  }
+
+  /** true when the ledger can be held on it: present, seen, and not already coming */
+  get documentable(): boolean {
+    return this.enabled && this.seen && (this.state === 'lurking' || this.state === 'stalking');
+  }
+
+  /**
+   * The inspector has filed it. It goes, and it stays gone for most of the
+   * floor — early on, for all of it. This is the one thing on the floor the
+   * player can do *to* it, and it has to be worth the walk toward it.
+   */
+  file(intensity: number) {
+    this.banish(70 - intensity * 40, 120 - intensity * 60);
+  }
+
+  /** the building has noticed the ledger: whatever it was waiting for, it stops */
+  hurry() {
+    if (this.state === 'gone') this.timer = Math.min(this.timer, 2 + this.rng() * 3);
   }
 
   /** put it back in the walls and start the clock again */
@@ -365,8 +399,9 @@ export class Presence {
       }
     }
 
-    // close and watched: it gives up pretending and comes
-    if (i > 0.45 && this.distance < 8 && visible && this.stateT > 5.5) {
+    // close and watched: it gives up pretending and comes — unless the ledger
+    // is being held on it, in which case it holds too, and is filed
+    if (i > 0.45 && this.distance < 8 && visible && this.stateT > 5.5 && !ctx.documentingIt) {
       this.state = 'charging';
       this.stateT = 0;
     }

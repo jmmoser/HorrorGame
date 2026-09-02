@@ -23,6 +23,13 @@ function showTitle() {
   window.setTimeout(() => gate.classList.add('hidden'), 1300);
   title.classList.remove('hidden');
 
+  // the controls, said once, in the register of the form. a game that never
+  // says how it is played reads as a game that was not finished.
+  const touch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  document.getElementById('title-controls')!.textContent = touch
+    ? 'LEFT THUMB WALKS · RIGHT THUMB LOOKS · TAP TO DOCUMENT'
+    : 'W A S D WALKS · MOUSE LOOKS · CLICK TO DOCUMENT · ESC PAUSES';
+
   const existing = loadSave();
   if (existing && (existing.floor > 1 || existing.ledger.length > 0)) {
     btnResume.classList.remove('hidden');

@@ -126,6 +126,8 @@ export interface FloorSpec {
   schedule: string[];
   /** long-hallway support: rows of the map duplicated when active */
   stretch?: { row: number; count: number };
+  /** the inspector's entry for documenting the figure on this floor */
+  figure?: string;
   /** ambience mix 0..1 */
   hum: number;
   /** occupancy sound events on this floor */
@@ -148,6 +150,8 @@ export interface LedgerEntry {
   /** set true when the building rewrites it */
   altered?: boolean;
   originalText?: string;
+  /** set true when the figure took the page: struck through, no longer counted */
+  torn?: boolean;
 }
 
 export interface SaveData {
@@ -162,4 +166,6 @@ export interface SaveData {
   /** floor-5 climax bookkeeping */
   ledgerAltered: boolean;
   startedAt: number;
+  /** one-time field-procedure hints already shown to this inspector */
+  hints?: string[];
 }

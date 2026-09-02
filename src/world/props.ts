@@ -11,6 +11,7 @@ import {
   phoneDialTexture,
   puffTexture,
   roomPlateTexture,
+  surveyMarkTexture,
   windowTexture,
 } from './textures';
 
@@ -825,9 +826,36 @@ function buildFootprints(ctx: PropContext): PropInstance {
   return { group: g, hit };
 }
 
-function buildInvisibleTarget(): PropInstance {
+/**
+ * The architectural discrepancies have no object: a corridor that is too long,
+ * a room that is another room. What the inspector aims at is the previous
+ * survey's chalk on the floor — a measurement, a room code — which is now the
+ * one thing on the floor that is provably wrong. Aiming at empty air was an
+ * unfinished feeling; aiming at a lie is a finding.
+ */
+function buildSurveyMark(ctx: PropContext): PropInstance {
   const g = new THREE.Group();
-  const hit = hitbox(1.9, 2.3, 1.2, 1.15);
+  const lines =
+    ctx.anchor.role === 'stretchmark'
+      ? ['CORRIDOR END', '35 M · SURVEY 1996']
+      : ['ROOM S-2', 'SEE ROOM S-2'];
+  const mark = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.5, 0.75),
+    new THREE.MeshStandardMaterial({
+      map: surveyMarkTexture(lines, ctx.seed),
+      transparent: true,
+      roughness: 1,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    }),
+  );
+  mark.rotation.x = -Math.PI / 2;
+  mark.rotation.z = (ctx.rng() - 0.5) * 0.2;
+  mark.position.set(0, 0.012, 0);
+  mark.userData.noShadow = true;
+  g.add(mark);
+  const hit = hitbox(1.9, 1.2, 1.4, 0.6);
   g.add(hit);
   return { group: g, hit };
 }
@@ -858,6 +886,6 @@ export function buildProp(ctx: PropContext): PropInstance {
     case 'footprints': return buildFootprints(ctx);
     case 'stretchmark':
     case 'twinroom':
-      return buildInvisibleTarget();
+      return buildSurveyMark(ctx);
   }
 }

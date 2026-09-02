@@ -591,3 +591,30 @@ export function noticeTexture(lines: string[], seed: number): THREE.CanvasTextur
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+/** a survey chalk mark on the floor: the 1996 inspector's own measurement,
+ *  which the building is now in a position to contradict */
+export function surveyMarkTexture(lines: string[], seed: number): THREE.CanvasTexture {
+  const rng = mulberry32(seed ^ 0x5c4a1);
+  const { c, g } = makeCanvas(256, 128);
+  g.clearRect(0, 0, 256, 128);
+  // chalk: uneven coverage, a little of it rubbed away
+  g.strokeStyle = 'rgba(214,206,186,0.7)';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(14, 64);
+  g.lineTo(242, 64 + (rng() - 0.5) * 6);
+  g.stroke();
+  g.fillStyle = 'rgba(222,214,196,0.86)';
+  g.font = 'bold 26px "Courier New", monospace';
+  g.textAlign = 'center';
+  const top = 64 - (lines.length - 1) * 16;
+  lines.forEach((line, i) => g.fillText(line, 128 + (rng() - 0.5) * 6, top + i * 32 - 8));
+  // wear
+  for (let i = 0; i < 90; i++) {
+    g.clearRect(rng() * 256, rng() * 128, 2 + rng() * 5, 2 + rng() * 3);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

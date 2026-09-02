@@ -89,11 +89,14 @@ export class LedgerUI {
       }
       no += 1;
       const div = document.createElement('div');
-      div.className = `entry entry-${kind}` + (e.altered ? ' altered' : '');
+      div.className =
+        `entry entry-${kind}` + (e.altered ? ' altered' : '') + (e.torn ? ' torn' : '');
       const meta = document.createElement('div');
       meta.className = 'entry-meta';
       const label = KIND_LABEL[kind] ? ` · ${KIND_LABEL[kind]}` : '';
-      meta.textContent = `NO. ${String(no).padStart(3, '0')} · FLOOR −${String(e.floor).padStart(2, '0')} · ${e.stamp}${label}`;
+      // a torn page: the stub is still numbered. the number is all that is left.
+      const torn = e.torn ? ' · TORN OUT' : '';
+      meta.textContent = `NO. ${String(no).padStart(3, '0')} · FLOOR −${String(e.floor).padStart(2, '0')} · ${e.stamp}${label}${torn}`;
       const body = document.createElement('div');
       body.textContent = e.text;
       div.appendChild(meta);
@@ -153,7 +156,7 @@ export class LedgerUI {
       const kind = e.kind ?? 'discrepancy';
       if (kind === 'filed') continue;
       no += 1;
-      if (e.floor !== floor || !e.anchor) continue;
+      if (e.floor !== floor || !e.anchor || e.torn) continue;
       if (kind !== 'discrepancy' && kind !== 'amend') continue;
       const cell = findAnchorCell(rows, e.anchor);
       if (!cell) continue;

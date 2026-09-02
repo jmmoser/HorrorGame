@@ -20,9 +20,11 @@ looking at it. It is closer every time you look away.
 > entity, no stingers, no flashes, no camera shake. The intermediate settings
 > scale everything between the two.
 
-Still no death, and still no fail state. The slow, compounding wrongness of
-beautiful empty spaces is all still here and still does most of the work —
-the difference is that the building has stopped waiting for you to notice.
+Still no death, and still no fail state. There is, now, a cost: the thing on
+the floor with you takes pages. The slow, compounding wrongness of beautiful
+empty spaces is all still here and still does most of the work — the
+difference is that the building has stopped waiting for you to notice, and
+that what you write down can be taken back.
 
 **And it has started watching back.** The previous build's answer to "make it
 worse" was rate: something landed every one to three seconds. That is the one
@@ -63,7 +65,9 @@ time off.
   clock running backward, coffee still steaming after thirty years, fresh
   footprints, a dial tone on a dead line…
 - **Per-player seeds.** A stable seed chosen at first launch drives which
-  discrepancies spawn on each floor. Your floor 2 is not your friend's
+  discrepancies spawn on each floor: every floor's pool is larger than the
+  number that spawn (seven authored discrepancies on most floors, four or
+  five of them chosen per case), so your floor 2 is not your friend's
   floor 2. A few entry variants are rare (<1% of players). Compare notes.
 - **Logging changes the floor.** Some discrepancies, once logged, silently
   change something elsewhere — a closed door now ajar, a corridor light now
@@ -96,6 +100,20 @@ time off.
   is doing on this floor, it is also keeping a record. How long it stays gone
   after an arrival collapses with depth: early on, reaching you costs it the
   rest of the corridor; deep in, it is back before your hands have stopped.
+- **It can be documented.** It is not on the schedule, which makes it the
+  best finding on the floor. Hold the ledger on it from within nine metres —
+  it holds still for that, as it holds still for everything — and after a
+  long second it is filed: an entry in the inspector's hand, a count toward
+  the quota, and the figure gone for most of the floor. It cannot be filed
+  once it has started coming. The floor's tension is that arithmetic: find it
+  and hold on it before it decides to stop waiting.
+- **It takes pages.** When it reaches you, the most recent page written on
+  that floor is torn out. The stub stays in the ledger, numbered, struck
+  through; the thing it recorded is unrecorded again and has to be documented
+  a second time. If that drops the floor under quota, the call button goes
+  dark. Filed floors are safe. This is the whole cost, and it is enough:
+  every entry past the quota is now something you can lose, and the way to
+  keep it is to stop writing and leave.
 - **The building writes in your ledger, about you.** Entries appear in the
   inspector's own record, in the inspector's own format, numbered in the
   inspector's own sequence — struck through the page by something with a
@@ -172,6 +190,10 @@ time off.
   into the ledger.
 - **The Tier 3 climax on floor −05** — an entry you wrote earlier in your own
   ledger has been rewritten while you were descending.
+- **The ending is spent in the car.** Below the schedule the doors do not
+  open. You are sealed in with the counter, which keeps counting, and every
+  floor the car passes one more entry in your ledger stops being yours — the
+  ledger can be opened and watched while it happens. Then the light goes.
 - **The ledger** — diegetic journal UI with the floor's filed schedule, a
   drafted blueprint per floor (drawn from the *authored* map, which the
   building does not always agree with), red-ink marks where each finding was
@@ -185,7 +207,12 @@ time off.
   building.
 - **Mobile + desktop controls** — virtual stick + drag look + tap to log,
   with gyroscope as an additive layer (the building shifts when you
-  physically lean); WASD + pointer lock + click on desktop.
+  physically lean); WASD + pointer lock + click on desktop. The title screen
+  says which, once, and floor −01's arrival card carries the field procedure
+  (aim at anything, tap to document, log what the schedule does not list).
+  The HUD shows the floor's quota under the depth counter; one-time hints
+  fire the first time the figure is sighted and the first time it takes a
+  page.
 - **Synthesized audio, 50% of the horror** — near-silence: room tone,
   ventilation, surface-dependent footsteps, one sub-bass drone that thickens
   with depth, and binaural (HRTF) occupancy sounds — a phone ringing in a
@@ -255,7 +282,8 @@ src/
     watcher.ts the model of the person playing — what they flinch at, measured
                off their own hands, and how settled they have become
   world/
-    presence.ts the figure — geometry, the observation rule, and how it breaks
+    presence.ts the figure — geometry, the observation rule, how it breaks,
+               and how it is filed
     observations.ts the building's own ledger, whose only subject is you
     faces.ts   procedurally drawn faces, for the head and for the whole screen
     specs.ts   the five floors: ASCII maps + anchors + discrepancy pools
@@ -381,7 +409,7 @@ than constraints, and the honest summary is:
 | volume spikes | a dedicated, limited scare bus | none — every sound slow-attack |
 | entity | one per floor, intercepting | none |
 | chase | it runs at you above half intensity | none |
-| game-over | **still none** | still none |
+| game-over | **still none** — but contact tears a page | still none |
 | explanations | **still none** | still none |
 
 The two that survive at every setting are the two the game was actually built

@@ -37,8 +37,25 @@ import { observation } from './world/observations';
 type State = 'idle' | 'arriving' | 'play' | 'departing' | 'ending';
 
 const INTERACT_DIST = 5.0;
+/** the figure is documented from further off than a desk — nobody walks up to it */
+const FIGURE_DIST = 9.0;
 /** seconds the inspector spends framing an observation before it is written */
 const DOC_TIME = 1.0;
+/** the figure takes longer to get down on paper. the hands are not steady. */
+const DOC_TIME_FIGURE = 1.8;
+/** what is filed when the inspector documents it on a floor with no line of its own */
+const FIGURE_ENTRY_DEFAULT =
+  'A figure, standing, facing me. Too tall. It is not on the schedule. Logged.';
+/** what the car does to the record, one entry per floor, below the schedule */
+const ENDING_REWRITES = [
+  'There was nothing on this floor. I have checked. I was alone. The floor is correct.',
+  'No deviation. No deviation. No deviation. The schedule is correct and always was.',
+  'I did not write the entry above this one. I am writing this one. I am sure of that.',
+  'The inspector was cooperative throughout. The inspector signed out.',
+  'FLOOR — FILED · 0 DISCREPANCIES · 0 AMENDMENTS · 0 OBSERVATIONS',
+];
+/** seconds between floors, once there are no more floors */
+const ENDING_TICK = 7;
 /** attention gained per act of documentation — the building reads the ledger */
 const ATTN = { real: 0.1, overQuota: 0.25, amend: 0.2, mundane: 0.07, notice: 0.04 };
 /** crossing these makes the building answer with an alteration of its own */
@@ -85,6 +102,7 @@ interface AmendTarget {
 }
 
 type InteractHit =
+  | { kind: 'figure' }
   | { kind: 'target'; target: ActiveTarget }
   | { kind: 'mundane'; target: MundaneTarget }
   | { kind: 'notice'; target: NoticeTarget }
@@ -161,6 +179,9 @@ export class Game {
   private fovSmooth = 0;
   /** one contact per floor is enough; more than that and it is a mechanic */
   private contactsThisFloor = 0;
+  /** below the schedule: how many entries the car has taken so far */
+  private endingRewrites = 0;
+  private endingCardShown = false;
 
   constructor(canvas: HTMLCanvasElement, save: SaveData) {
     this.save = save;
@@ -386,6 +407,7 @@ export class Game {
     this.ambientBase = palette.ambientIntensity;
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
+    this.flashBase = 40;
     this.flashlight.intensity = this.flashBase;
     this.flashSmooth = this.flashBase;
     this.pipeline.setGrade(GRADES[spec.palette]);
@@ -423,6 +445,7 @@ export class Game {
     // recompute the building's attention from what was already logged here,
     // replaying any responses it had already made
     this.recomputeAttention(spec.floor, spec.quota);
+    this.hud.setQuota(this.selectedQuotaProgress());
 
     // spawn inside the car, facing the doors
     const el = built.grid.elevator;
@@ -446,12 +469,26 @@ export class Game {
       this.dread.kick(0.35, { static: 0.45 });
     };
     presence.onContact = () => this.onContact();
+    // filed on a previous visit (resume): it stays filed for a long while
+    if (this.save.logged.includes(this.figureId(spec.floor))) presence.banish(60, 90);
     this.scene.add(presence.group);
     this.presence = presence;
 
     this.hud.setDepth(spec.floor);
     window.setTimeout(() => {
-      if (this.built === built) this.hud.showFloorCard(spec.floor, spec.name, spec.schedule);
+      if (this.built !== built) return;
+      // the first floor also carries the field procedure — the only place the
+      // game says how it is played, and it says it as a form would
+      const procedure =
+        spec.floor === 1
+          ? [
+              'FIELD PROCEDURE 7-A',
+              'AIM AT ANYTHING · TAP TO DOCUMENT',
+              'LOG WHAT THE SCHEDULE DOES NOT LIST',
+              'THE CALL BUTTON LIGHTS AT QUOTA',
+            ]
+          : [];
+      this.hud.showFloorCard(spec.floor, spec.name, spec.schedule, procedure);
     }, 1600);
     this.depthShown = spec.floor;
     this.haptics.setDepth(spec.floor);
@@ -491,17 +528,27 @@ export class Game {
 
   // ------------------------------------------------------------ discovery
 
+  /** the ledger id of the figure, filed, on a given floor */
+  private figureId(floor: number): string {
+    return `f${floor}-figure`;
+  }
+
   private selectedQuotaProgress(): { logged: number; quota: number } {
     if (!this.built) return { logged: 0, quota: 1 };
     const ids = this.built.targets.map((t) => t.sel.def.id);
     if (this.built.ledgerDiscrepancy) ids.push(this.built.ledgerDiscrepancy.def.id);
+    // the thing that is not on the schedule is, once filed, the best finding
+    // on the floor
+    ids.push(this.figureId(this.built.spec.floor));
     const logged = ids.filter((id) => this.save.logged.includes(id)).length;
     return { logged, quota: this.built.spec.quota };
   }
 
   private refreshQuota(announce: boolean) {
     if (!this.built) return;
-    const { logged, quota } = this.selectedQuotaProgress();
+    const progress = this.selectedQuotaProgress();
+    const { logged, quota } = progress;
+    this.hud.setQuota(progress);
     const met = logged >= quota;
     if (met && !this.built.elevator.callActive) {
       this.built.elevator.setCallActive(true);
@@ -509,7 +556,25 @@ export class Game {
         this.audio.quotaCue();
         window.setTimeout(() => this.hud.showToast('the call button is lit'), 1800);
       }
+    } else if (!met && this.built.elevator.callActive) {
+      // a page has gone: the building withdraws the offer
+      this.built.elevator.setCallActive(false);
+      if (announce) {
+        this.audio.deadClick();
+        window.setTimeout(() => this.hud.showToast('the call button has gone dark'), 3200);
+      }
     }
+  }
+
+  /** a one-time line of field guidance, shown once per inspector, ever */
+  private hint(key: string, text: string, delayMs = 0) {
+    const seen = (this.save.hints ??= []);
+    if (seen.includes(key)) return;
+    seen.push(key);
+    window.setTimeout(() => {
+      if (this.state === 'play') this.hud.showToast(text);
+    }, delayMs);
+    this.persist();
   }
 
   private writeEntry(
@@ -550,6 +615,67 @@ export class Game {
     this.bumpAttention(logged > quota ? ATTN.overQuota : ATTN.real);
     this.refreshQuota(true);
     this.persist();
+  }
+
+  /**
+   * The inspector has held the ledger on it long enough to write it down.
+   * It goes — for most of the floor — and the record gains the only entry in
+   * it that describes something looking back.
+   */
+  private logFigure() {
+    const built = this.built;
+    const p = this.presence;
+    if (!built || !p) return;
+    const id = this.figureId(built.spec.floor);
+    if (this.save.logged.includes(id)) return;
+    this.writeEntry(id, built.spec.floor, built.spec.figure ?? FIGURE_ENTRY_DEFAULT);
+    this.audio.pencil();
+    this.hud.showToast('logged: it is not on the schedule');
+    this.hud.pulseTab();
+    p.file(this.dread.intensity);
+    this.audio.staticBurst(0.14);
+    this.dread.kick(0.45, { static: 0.4 });
+    this.haptics.jolt('small');
+    // the building reads this one too, and it is the entry it minds most
+    this.bumpAttention(ATTN.real + ATTN.amend);
+    this.refreshQuota(true);
+    this.persist();
+  }
+
+  /**
+   * It reached the inspector, and it took something: the most recent page
+   * written on this floor. The entry stays in the book, struck through, and
+   * whatever it recorded is unrecorded again — the call button can go dark,
+   * and the desk or the door or the figure has to be documented a second
+   * time. There is still no death. There is, now, a cost.
+   */
+  private tearPage(): LedgerEntry | null {
+    const built = this.built;
+    if (!built) return null;
+    const floor = built.spec.floor;
+    for (let n = this.save.ledger.length - 1; n >= 0; n--) {
+      const e = this.save.ledger[n];
+      if (e.floor !== floor || e.torn) continue;
+      const kind = e.kind ?? 'discrepancy';
+      if (kind === 'filed' || kind === 'observed') continue;
+      // the rewritten entry is the building's, and it does not take its own
+      if (e.altered) continue;
+      if (built.ledgerDiscrepancy && e.id === built.ledgerDiscrepancy.def.id) continue;
+      e.torn = true;
+      const idx = this.save.logged.indexOf(e.id);
+      if (idx >= 0) this.save.logged.splice(idx, 1);
+      for (const t of built.targets) if (t.sel.def.id === e.id) t.logged = false;
+      for (const m of built.mundanes) {
+        if (`m-f${floor}-${m.anchor}` === e.id) {
+          m.logged = false;
+          this.mundaneCount = Math.max(0, this.mundaneCount - 1);
+        }
+      }
+      for (const nt of built.notices) if (`note-f${floor}-${nt.anchor}` === e.id) nt.logged = false;
+      for (const a of this.amendTargets) if (a.id === e.id) a.logged = false;
+      return e;
+    }
+    return null;
   }
 
   private logLedgerDiscrepancy() {
@@ -639,6 +765,8 @@ export class Game {
       this.attnCrossed += 1;
       this.queueAmbientAlteration(this.attnCrossed);
       this.audio.provoke();
+      // and it comes to see what is being written
+      this.presence?.hurry();
     }
     this.audio.setAttention(Math.min(1, this.attention));
   }
@@ -717,6 +845,10 @@ export class Game {
   }
 
   private commitDocumenting(hit: InteractHit) {
+    if (hit.kind === 'figure') {
+      this.logFigure();
+      return;
+    }
     if (hit.kind === 'target') this.logTarget(hit.target);
     else if (hit.kind === 'mundane') this.logMundane(hit.target);
     else if (hit.kind === 'notice') this.logNotice(hit.target);
@@ -733,11 +865,18 @@ export class Game {
     if (this.state !== 'play' || !this.built || this.ledgerUI.isOpen || this.documenting) return;
     const hit = this.raycastInteract();
     if (!hit) return;
-    if (hit.kind === 'target' || hit.kind === 'mundane' || hit.kind === 'notice' || hit.kind === 'amend') {
+    if (
+      hit.kind === 'target' ||
+      hit.kind === 'mundane' ||
+      hit.kind === 'notice' ||
+      hit.kind === 'amend' ||
+      hit.kind === 'figure'
+    ) {
       // documentation is an act, not a tap: hold the frame, then the pencil
       this.documenting = { hit, t: 0 };
       this.player.frozen = true;
       this.hud.setDocProgress(0);
+      if (hit.kind === 'figure') this.audio.staticBurst(0.06);
     } else if (hit.kind === 'call') {
       if (this.built.elevator.callActive) {
         this.audio.buttonPress();
@@ -793,6 +932,17 @@ export class Game {
       }
     }
     meshes.push(this.built.elevator.buttonHit, this.built.elevator.panelHit);
+    // the figure can be aimed at from further off than anything else, but
+    // only while it is holding still for it
+    const p = this.presence;
+    const figureHit =
+      p && p.documentable && !this.save.logged.includes(this.figureId(this.built.spec.floor))
+        ? p.hit
+        : null;
+    if (figureHit) {
+      meshes.push(figureHit);
+      this.raycaster.far = FIGURE_DIST;
+    }
     const hits = this.raycaster.intersectObjects(meshes, false);
     if (hits.length === 0) return null;
     // don't let hitboxes read through walls
@@ -800,6 +950,8 @@ export class Game {
     for (const h of hits) {
       if (h.distance > wallD + 0.6) break;
       const mesh = h.object as THREE.Mesh;
+      if (mesh === figureHit) return { kind: 'figure' };
+      if (h.distance > INTERACT_DIST) continue;
       const a = amends.get(mesh);
       if (a) return { kind: 'amend', target: a };
       const t = targets.get(mesh);
@@ -876,7 +1028,8 @@ export class Game {
     const f = this.built.spec.floor;
     const id = `filed-f${f}`;
     if (this.save.ledger.some((e) => e.id === id)) return;
-    const onFloor = this.save.ledger.filter((e) => e.floor === f);
+    // torn pages are stubs, not findings; the filed line counts what is left
+    const onFloor = this.save.ledger.filter((e) => e.floor === f && !e.torn);
     const count = (k: EntryKind) => onFloor.filter((e) => (e.kind ?? 'discrepancy') === k).length;
     const disc = count('discrepancy');
     const amends = count('amend');
@@ -891,17 +1044,86 @@ export class Game {
     );
   }
 
+  /**
+   * There is no floor six on the schedule. There is, it turns out, a floor
+   * six, and a seven, and the doors do not open on any of them. The inspector
+   * stays in the car. The counter keeps counting. And every floor the car
+   * passes, one more entry in the ledger stops being the inspector's.
+   */
   private beginEnding() {
-    // there is no floor six on the schedule
+    if (!this.built) return;
     this.state = 'ending';
     this.stateT = 0;
     this.endingTimer = 0;
-    this.setFade(true);
-    this.audio.duck();
-    this.haptics.stop();
-    // below floor five the building has nothing left to prove: the frame goes
-    // still, and that stillness is the last thing the ending has to work with
+    this.endingRewrites = 0;
+    this.endingCardShown = false;
+    this.cancelDocumenting();
+    this.player.frozen = true;
+    this.overlay.clear();
+    this.snap = null;
     this.dread.suspended = true;
+    this.haptics.stop();
+    this.depthShown = FLOORS.length;
+    this.hud.setQuota(null);
+    // the doors stay shut. the light comes back up on the inside of the car,
+    // and the inspector is facing the doors, which is where one looks in a
+    // lift, and which is the one thing on the floor that will not open.
+    const el = this.built.grid.elevator;
+    this.player.teleport(el.cx, el.cz, facingToYaw(el.doorDir) + Math.PI);
+    this.flashBase = 6;
+    this.built.elevator.closeDoors();
+    this.setFade(false);
+    this.audio.descend(ENDING_TICK * ENDING_REWRITES.length + 6);
+    this.persist();
+  }
+
+  private updateEnding(dt: number) {
+    const built = this.built;
+    if (!built) return;
+    this.endingTimer += dt;
+    const el = built.elevator;
+    // the car light: steady, then not
+    const failing = Math.max(0, (this.endingTimer - ENDING_TICK * 3) / (ENDING_TICK * 2));
+    el.setCarLight(
+      Math.max(0, 1 - failing) * (Math.random() < 0.03 * (1 + failing * 8) ? 0.25 : 1),
+    );
+    const depth = FLOORS.length + 1 + Math.floor(this.endingTimer / ENDING_TICK);
+    if (depth !== this.depthShown) {
+      this.depthShown = depth;
+      this.hud.setDepth(depth);
+      this.audio.arrivalSettle();
+      this.rewriteOne();
+    }
+    if (this.endingRewrites >= ENDING_REWRITES.length && !this.endingCardShown) {
+      this.endingCardShown = true;
+      el.setCarLight(0);
+      this.setFade(true);
+      window.setTimeout(() => this.showEndingCard(), 2600);
+    }
+  }
+
+  /** the car takes one more entry, in the inspector's own hand */
+  private rewriteOne() {
+    const line = ENDING_REWRITES[this.endingRewrites];
+    if (line === undefined) return;
+    const target = this.save.ledger.find((e) => {
+      const k = e.kind ?? 'discrepancy';
+      return !e.altered && !e.torn && k !== 'filed' && k !== 'observed';
+    });
+    if (target) {
+      target.originalText = target.text;
+      target.text = line;
+      target.altered = true;
+      this.audio.deadClick();
+      this.hud.pulseTab();
+      if (this.ledgerUI.isOpen) this.openLedger();
+    }
+    this.endingRewrites += 1;
+    this.persist();
+  }
+
+  private showEndingCard() {
+    this.audio.duck();
     this.overlay.clear();
     this.camera.rotation.z = 0;
     this.pipeline.setDread({
@@ -909,23 +1131,25 @@ export class Game {
       red: 0, flash: 0, ca: 0, dark: 0, pulse: 0,
     });
     const countKind = (k: EntryKind) =>
-      this.save.ledger.filter((e) => (e.kind ?? 'discrepancy') === k).length;
+      this.save.ledger.filter((e) => (e.kind ?? 'discrepancy') === k && !e.torn).length;
     const disc = countKind('discrepancy');
     const amends = countKind('amend');
+    const taken = this.save.ledger.filter((e) => e.altered || e.torn).length;
     const title = document.getElementById('title')!;
     title.classList.remove('hidden');
     title.classList.remove('fading');
     title.innerHTML = `
       <div class="title-inner">
         <p class="title-over">MUNICIPAL SURVEY — STRUCTURE 7</p>
-        <h1 class="title-name" id="ending-depth">FLOOR −06</h1>
+        <h1 class="title-name" id="ending-depth">FLOOR −${String(this.depthShown).padStart(2, '0')}</h1>
         <p class="title-brief">
           The schedule ends at floor five.<br/>
           The elevator has not stopped.<br/><br/>
           The inspection continues.
         </p>
         <p class="title-visitor" style="display:block">
-          ${disc} DISCREPANCIES · ${amends} AMENDMENTS · ${caseNumber(this.save.seed)}
+          ${disc} DISCREPANCIES · ${amends} AMENDMENTS · ${taken} ENTRIES NO LONGER YOURS<br/>
+          ${caseNumber(this.save.seed)}
         </p>
         <button id="btn-end-share" class="ghost-btn">tear out a page</button>
         <button id="btn-end-new" class="ghost-btn">request reassignment</button>
@@ -942,8 +1166,15 @@ export class Game {
       location.reload();
     });
     this.hud.hide();
+    if (this.ledgerUI.isOpen) this.ledgerUI.close();
     this.controls.enabled = false;
     document.getElementById('touch-ui')!.classList.add('hidden');
+    // the counter does not stop, even here
+    window.setInterval(() => {
+      this.depthShown += 1;
+      const elDepth = document.getElementById('ending-depth');
+      if (elDepth) elDepth.textContent = `FLOOR −${String(this.depthShown).padStart(2, '0')}`;
+    }, ENDING_TICK * 1000);
     this.persist();
   }
 
@@ -968,7 +1199,7 @@ export class Game {
     if (this.ledgerUI.isOpen) {
       this.ledgerUI.close();
       this.player.frozen = !this.canMove();
-    } else if (this.state === 'play' || this.state === 'arriving') {
+    } else if (this.state === 'play' || this.state === 'arriving' || this.state === 'ending') {
       this.openLedger();
     }
   }
@@ -1240,6 +1471,7 @@ export class Game {
       }).length,
       fear: this.watcher.fear,
       worst: this.watcher.worst(),
+      unamended: this.amendTargets.filter((a) => !a.logged).length,
       reading: this.ledgerUI.isOpen,
       last: [...this.save.ledger].reverse().find((e) => e.kind === 'observed')?.text ?? null,
       rng: Math.random,
@@ -1273,6 +1505,7 @@ export class Game {
       intensity: this.dread.intensity,
       playerVel: this.playerVel,
       documenting: this.documenting !== null,
+      documentingIt: this.documenting?.hit.kind === 'figure',
     };
   }
 
@@ -1286,6 +1519,8 @@ export class Game {
     if (this.settings.captions) {
       this.hud.showCaption(`something is standing there — ${Math.round(distance)}m`);
     }
+    // once, ever: the thing that is not on the schedule can be put on it
+    this.hint('figure', 'it is not on the schedule. it can be documented — if it holds still.', 1400);
   }
 
   /** it has arrived. there is still no game over; that is not the same as safe. */
@@ -1306,9 +1541,24 @@ export class Game {
     this.haptics.jolt('contact');
     // the inspector is spun around by it, and it is not there when they land
     this.snap = { yaw: this.player.yaw + Math.PI * (Math.random() > 0.5 ? 1 : -1), t: 0.45 };
+    // and it has taken the last page written on this floor
+    const torn = this.tearPage();
+    if (torn) {
+      this.audio.pageTurn();
+      window.setTimeout(() => this.audio.pageTurn(), 130);
+      this.hud.pulseTab();
+      this.refreshQuota(true);
+      this.persist();
+    }
     window.setTimeout(() => {
-      if (this.state === 'play') this.hud.showToast('nothing was there. the record shows nothing.');
+      if (this.state !== 'play') return;
+      this.hud.showToast(
+        torn
+          ? 'nothing was there. a page is missing from the ledger.'
+          : 'nothing was there. the record shows nothing.',
+      );
     }, 2600);
+    if (torn) this.hint('torn', 'what it takes has to be documented again.', 6400);
     // after the first arrival it stays away longer, so the floor can breathe
     if (this.contactsThisFloor >= 2) this.presence?.banish(45, 70);
   }
@@ -1393,7 +1643,6 @@ export class Game {
     this.stateT += dt;
     const built = this.built;
     if (!built) {
-      if (this.state === 'ending') this.updateEnding(dt);
       this.pipeline.render(dt);
       return;
     }
@@ -1412,10 +1661,17 @@ export class Game {
       this.player.frozen = !this.canMove();
 
       // the act of documentation: hold the frame until the pencil moves
+      if (this.documenting?.hit.kind === 'figure' && !this.presence?.documentable) {
+        // it has to keep holding still for it. if it moves off, or comes, the
+        // page is blank and the inspector's hands are free again
+        this.cancelDocumenting();
+        this.hud.showToast('it moved.');
+      }
       if (this.documenting) {
+        const docTime = this.documenting.hit.kind === 'figure' ? DOC_TIME_FIGURE : DOC_TIME;
         this.documenting.t += dt;
-        this.hud.setDocProgress(this.documenting.t / DOC_TIME);
-        if (this.documenting.t >= DOC_TIME) {
+        this.hud.setDocProgress(this.documenting.t / docTime);
+        if (this.documenting.t >= docTime) {
           const hit = this.documenting.hit;
           this.documenting = null;
           this.hud.setDocProgress(null);
@@ -1458,9 +1714,12 @@ export class Game {
         window.setTimeout(() => {
           this.save.floor = next;
           this.persist();
-          this.loadFloor(next);
+          if (next > FLOORS.length) this.beginEnding();
+          else this.loadFloor(next);
         }, 3400);
       }
+    } else if (this.state === 'ending') {
+      this.updateEnding(dt);
     }
 
     if (this.collide) this.player.update(dt, this.collide);
@@ -1571,18 +1830,6 @@ export class Game {
     this.pipeline.render(dt);
   }
 
-  private updateEnding(dt: number) {
-    this.endingTimer += dt;
-    // the counter does not stop
-    const depth = 6 + Math.floor(this.endingTimer / 7);
-    if (depth !== this.depthShown) {
-      this.depthShown = depth;
-      const elDepth = document.getElementById('ending-depth');
-      if (elDepth) elDepth.textContent = `FLOOR −${String(depth).padStart(2, '0')}`;
-      this.audio.arrivalSettle();
-    }
-  }
-
   private persist() {
     this.lastSaveWrite = this.time;
     writeSave(this.save);
@@ -1602,6 +1849,9 @@ export class Game {
         this.built?.targets.forEach((t) => this.logTarget(t));
         this.logLedgerDiscrepancy();
       },
+      logFigure: () => this.logFigure(),
+      contact: () => this.onContact(),
+      tornEntries: () => this.save.ledger.filter((e) => e.torn).length,
       logMundane: () => {
         const m = this.built?.mundanes.find((x) => !x.logged && !this.alteredAnchors.has(x.anchor));
         if (m) this.logMundane(m);

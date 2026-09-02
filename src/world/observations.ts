@@ -38,6 +38,8 @@ export interface ObservationContext {
   fear: number;
   /** the kind this player has flinched hardest at, once it is known */
   worst: ScareKind | null;
+  /** props the building has changed since they were recorded, not yet noticed */
+  unamended: number;
   /** true when this is being written while the ledger is open in front of them */
   reading: boolean;
   /** the last thing written about them, so the file does not stutter */
@@ -131,6 +133,16 @@ const LINES: Line[] = [
     when: (c) => c.worst !== null,
     weight: 3,
     text: (c) => WORST_LINE[c.worst!],
+  },
+  {
+    // the one line in the file that is also a lead: something the inspector
+    // recorded is no longer as recorded, and the inspector has not been back
+    when: (c) => c.unamended > 0,
+    weight: 4,
+    text: (c) =>
+      c.unamended === 1
+        ? 'one item on this floor is no longer as the inspector recorded it. the inspector has not gone back to look.'
+        : `${c.unamended} items on this floor are no longer as the inspector recorded them. the inspector has not gone back to look.`,
   },
   {
     when: (c) => c.fear > 0.5,

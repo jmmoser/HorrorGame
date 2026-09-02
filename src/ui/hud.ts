@@ -4,6 +4,7 @@
 export class Hud {
   private root = document.getElementById('hud')!;
   private depthNum = document.getElementById('depth-num')!;
+  private quotaLine = document.getElementById('quota-line')!;
   private reticle = document.getElementById('reticle')!;
   private tab = document.getElementById('ledger-tab')!;
   private toast = document.getElementById('log-toast')!;
@@ -33,6 +34,17 @@ export class Hud {
     this.depthNum.textContent = `−${String(floor).padStart(2, '0')}`;
   }
 
+  /** how much of the floor's quota is on paper; null hides it (the ending) */
+  setQuota(p: { logged: number; quota: number } | null) {
+    if (!p) {
+      this.quotaLine.classList.add('hidden');
+      return;
+    }
+    this.quotaLine.classList.remove('hidden');
+    this.quotaLine.textContent = `LOGGED ${p.logged} OF ${p.quota}`;
+    this.quotaLine.classList.toggle('met', p.logged >= p.quota);
+  }
+
   setOnTarget(on: boolean) {
     this.reticle.classList.toggle('on-target', on);
   }
@@ -51,7 +63,7 @@ export class Hud {
   }
 
   /** floor arrival card: name + the filed schedule, fading after a beat */
-  showFloorCard(floor: number, name: string, schedule: string[]) {
+  showFloorCard(floor: number, name: string, schedule: string[], procedure: string[] = []) {
     this.floorCardName.textContent = `FLOOR −${String(floor).padStart(2, '0')} · ${name}`;
     this.floorCardSched.innerHTML = '';
     for (const line of schedule) {
@@ -59,16 +71,24 @@ export class Hud {
       div.textContent = line;
       this.floorCardSched.appendChild(div);
     }
+    // the field procedure, ruled off under the schedule, first floor only
+    procedure.forEach((line, i) => {
+      const div = document.createElement('div');
+      div.className = i === 0 ? 'card-procedure card-procedure-head' : 'card-procedure';
+      div.textContent = line;
+      this.floorCardSched.appendChild(div);
+    });
     this.floorCard.classList.remove('hidden');
     this.floorCard.classList.remove('leaving');
     if (this.floorCardTimer) clearTimeout(this.floorCardTimer);
+    // the procedure is read more slowly than a schedule
     this.floorCardTimer = window.setTimeout(() => {
       this.floorCard.classList.add('leaving');
       this.floorCardTimer = window.setTimeout(
         () => this.floorCard.classList.add('hidden'),
         1600,
       );
-    }, 7000);
+    }, procedure.length ? 12000 : 7000);
   }
 
   pulseTab() {
