@@ -407,6 +407,7 @@ export class Game {
     this.ambientBase = palette.ambientIntensity;
     this.ambient.intensity = palette.ambientIntensity;
     this.flashlight.color.set(palette.flashlight);
+    this.flashBase = 40;
     this.flashlight.intensity = this.flashBase;
     this.flashSmooth = this.flashBase;
     this.pipeline.setGrade(GRADES[spec.palette]);
@@ -1064,7 +1065,12 @@ export class Game {
     this.haptics.stop();
     this.depthShown = FLOORS.length;
     this.hud.setQuota(null);
-    // the doors stay shut. the light comes back up on the inside of the car.
+    // the doors stay shut. the light comes back up on the inside of the car,
+    // and the inspector is facing the doors, which is where one looks in a
+    // lift, and which is the one thing on the floor that will not open.
+    const el = this.built.grid.elevator;
+    this.player.teleport(el.cx, el.cz, facingToYaw(el.doorDir) + Math.PI);
+    this.flashBase = 6;
     this.built.elevator.closeDoors();
     this.setFade(false);
     this.audio.descend(ENDING_TICK * ENDING_REWRITES.length + 6);
