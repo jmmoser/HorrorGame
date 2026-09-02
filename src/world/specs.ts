@@ -15,6 +15,8 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.5,
     occupancy: [],
+    figure:
+      'A figure at the far end of the corridor, past the last fixture. Too tall for the door beside it. It did not move while I wrote this. It is not on the schedule. Logged.',
     schedule: [
       'ROOMS 101–105 · TWO CORRIDOR DOORS',
       'POWER CUT AT STREET — 1996',
@@ -22,15 +24,15 @@ export const FLOORS: FloorSpec[] = [
     ],
     map: `
 #######################
-#..q..#...w..#..x...H.#
+#..q..#...w.c#..x...H.#
 #.aLk.#C.BM..#...FN...#
-#..A..#......#...G...p#
+#..A..#......#.n.G...p#
 ###.#####.#######.#####
-#.r..Ou.s..P..d.t...v.#
-####.#####EE######.####
+#EE.rOu.s..P..d.t...v.#
+####.#############.####
 #.......######V.b.....#
 #I......######......T.#
-#....K..######........#
+#..f.K..######........#
 #J......######........#
 #.......######.......W#
 #######################
@@ -65,6 +67,9 @@ export const FLOORS: FloorSpec[] = [
       V: { role: 'cabinet', facing: 's' },
       T: { role: 'bench', facing: 'w' },
       W: { role: 'plant', facing: 'n' },
+      c: { role: 'clock', facing: 'w' },
+      n: { role: 'phone', facing: 's' },
+      f: { role: 'footprints', facing: 's', absentWhenNormal: true },
       b: {
         role: 'notice',
         facing: 's',
@@ -118,6 +123,33 @@ export const FLOORS: FloorSpec[] = [
             'A cup of coffee on the desk in 101, still steaming. It is my mug. The one from my kitchen. The chip on the handle is the same chip. Logged.',
         },
       },
+      {
+        id: 'f1-clock',
+        type: 'backward-clock',
+        tier: 2,
+        anchor: 'c',
+        entry:
+          'The wall clock in 104 is running. The second hand goes the wrong way round. The 1996 survey has every clock in the building stopped at 4:17. This one has been busy since.',
+        toast: 'logged: the clock runs backward',
+      },
+      {
+        id: 'f1-phone',
+        type: 'phone-off-hook',
+        tier: 2,
+        anchor: 'n',
+        entry:
+          'A handset off the hook in 105, laid on the table beside the cradle. There is a dial tone. The power is cut at the street. I have written that down twice now and it has not helped.',
+        toast: 'logged: a dial tone',
+      },
+      {
+        id: 'f1-steps',
+        type: 'fresh-footprints',
+        tier: 2,
+        anchor: 'f',
+        entry:
+          'Footprints in the dust of the south-west office, from the shelving toward the door. Not back. The dust on this floor is thirty years deep and these are in the top of it.',
+        toast: 'logged: footprints, going out',
+      },
     ],
   },
 
@@ -131,6 +163,8 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.5,
     hum: 0.35,
     occupancy: ['phone-ring'],
+    figure:
+      'It is on this floor as well. Same height. Same stillness. It was at the far end of the corridor when I looked down to write and at the near end when I looked up. Logged, from a distance I did not measure.',
     stretch: { row: 11, count: 3 },
     schedule: [
       'UNITS 2E–2K · ONE CORRIDOR — 35 METERS',
@@ -146,14 +180,14 @@ export const FLOORS: FloorSpec[] = [
 #r.....H#######
 #....s#B#######
 #######.#######
-#m....#C#######
+#m..k.#C#######
 #t.....I#######
 #..u..#D#######
 #######.#######
 #v....#F#######
 #n.....J#######
-#....w#G#######
-#######.#######
+#.f..w#G#######
+#######x#######
 #######z#######
 ###############
 `,
@@ -181,6 +215,9 @@ export const FLOORS: FloorSpec[] = [
       G: { role: 'door', facing: 'w', label: '2K' },
       J: { role: 'light', facing: 's', lit: false },
       z: { role: 'stretchmark', facing: 'n', absentWhenNormal: true },
+      k: { role: 'coffee', facing: 's' },
+      f: { role: 'footprints', facing: 'n', absentWhenNormal: true },
+      x: { role: 'door', facing: 'w', label: '2L', absentWhenNormal: true },
       g: {
         role: 'notice',
         facing: 's',
@@ -234,6 +271,34 @@ export const FLOORS: FloorSpec[] = [
             'The handset in unit 2D is off the hook, laid beside the cradle, facing up. There is a dial tone. It stopped when I entered the room, the way a person stops talking.',
         },
       },
+      {
+        id: 'f2-coffee',
+        type: 'steaming-coffee',
+        tier: 2,
+        anchor: 'k',
+        entry:
+          'A cup of coffee on the side table in unit 2C, steaming. Somebody is taking their breaks on a floor that has had no tenants since 1996. Logged from the doorway.',
+        toast: 'logged: still warm',
+      },
+      {
+        id: 'f2-steps',
+        type: 'fresh-footprints',
+        tier: 2,
+        anchor: 'f',
+        entry:
+          'Footprints in the carpet dust of unit 2D, from the window to the door. The stride is long. Longer than mine. I did not put my foot in one to check.',
+        toast: 'logged: a long stride',
+      },
+      {
+        id: 'f2-door',
+        type: 'extra-door',
+        tier: 1,
+        anchor: 'x',
+        entry:
+          'A seventh door on the east wall, at the far end, past 2K. It is numbered 2L. The schedule lists 2E through 2K. Six units. I have counted the doors three times and the schedule once.',
+        toast: 'logged: 2L',
+        alteration: { anchor: 'G', kind: 'door-ajar' },
+      },
     ],
   },
 
@@ -247,6 +312,8 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.3,
     occupancy: ['chair-scrape', 'below'],
+    figure:
+      'Documented the figure in the open plan, between the desk rows. When I raised the ledger it raised its hands to the same height and held them there. I have decided that this is a coincidence. Logged.',
     schedule: [
       'OPEN PLAN · TWO SOUTH OFFICES',
       'NO LIVE PLANTING · NO TENANTS 30 YRS',
@@ -258,7 +325,7 @@ export const FLOORS: FloorSpec[] = [
 #....L.....M.....N....#
 #..dD.....q.....gh....#
 #k............f.......#
-#......t........u.....#
+#m.....t........u.....#
 #.....................#
 ##.################.###
 #....e................#
@@ -293,6 +360,7 @@ export const FLOORS: FloorSpec[] = [
       V: { role: 'desk', facing: 'n' },
       X: { role: 'chair', facing: 's' },
       z: { role: 'twinroom', facing: 's', absentWhenNormal: true },
+      m: { role: 'calendar', facing: 'e' },
       e: {
         role: 'notice',
         facing: 's',
@@ -355,6 +423,24 @@ export const FLOORS: FloorSpec[] = [
           'Footprints in the dust between the desk rows. They start at nothing and stop at nothing. The stride is shorter than mine. Bare feet.',
         toast: 'logged: footprints in the dust',
       },
+      {
+        id: 'f3-window',
+        type: 'wrong-window',
+        tier: 1,
+        anchor: 'b',
+        entry:
+          'The middle window on the north wall shows dawn. The window to its left shows night. The window to its right shows night. The glass in the middle one is warm.',
+        toast: 'logged: dawn, in one window',
+      },
+      {
+        id: 'f3-calendar',
+        type: 'current-calendar',
+        tier: 2,
+        anchor: 'm',
+        entry:
+          'A wall calendar by the west wall, opened to {TODAY}. The paper is white. Every other piece of paper on this floor is the colour of tea.',
+        toast: 'logged: today, on the wall',
+      },
     ],
   },
 
@@ -368,6 +454,8 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.5,
     hum: 0.55,
     occupancy: ['knock', 'below'],
+    figure:
+      'It was in the stacks, between the shelving, and it was already facing me when I turned the corner. I no longer believe it is waiting for anything. It is keeping a record. Logged.',
     schedule: [
       'ARCHIVE STACKS · ONE CROSS-CORRIDOR',
       'RISERS DRAINED 1996 — NO WATER',
@@ -379,14 +467,14 @@ export const FLOORS: FloorSpec[] = [
 #......L....M.......#
 ###.#####.#######.###
 #s...t..#.uk....#.w.#
-#.......#.......#...#
+#.......#...r...#...#
 #a......#.v.....#.b.#
 #####.###.#####.##.##
 #.n.................#
 #.N....d....P.....O.#
 ###.#####.#####.#####
 #c....##y..x##.....f#
-#......#....#...Q...#
+#..j...#....#...Q...#
 #g.....#.h..#......e#
 #####################
 `,
@@ -413,6 +501,8 @@ export const FLOORS: FloorSpec[] = [
       g: { role: 'cart', facing: 'e' },
       h: { role: 'chair', facing: 'n' },
       e: { role: 'shelf', facing: 'w' },
+      r: { role: 'phone', facing: 's' },
+      j: { role: 'coffee', facing: 's' },
       n: {
         role: 'notice',
         facing: 's',
@@ -470,6 +560,24 @@ export const FLOORS: FloorSpec[] = [
           'The clock above the index cabinets is running backward, faster than the one two floors up. As if it has further to go.',
         toast: 'logged: backward, faster',
       },
+      {
+        id: 'f4-phone',
+        type: 'phone-off-hook',
+        tier: 2,
+        anchor: 'r',
+        entry:
+          'A telephone on the records desk, handset off the hook, dial tone audible from the aisle. The archive was never on the exchange. There is no socket in the wall behind it.',
+        toast: 'logged: a line that was never installed',
+      },
+      {
+        id: 'f4-coffee',
+        type: 'steaming-coffee',
+        tier: 2,
+        anchor: 'j',
+        entry:
+          'A cup of coffee in the south-west stack, steaming, set down on a shelf at the height of my hand. It was put there for someone my height. Logged.',
+        toast: 'logged: set down for someone',
+      },
     ],
   },
 
@@ -483,6 +591,8 @@ export const FLOORS: FloorSpec[] = [
     ceilingHeight: 2.7,
     hum: 0.2,
     occupancy: ['below', 'chair-scrape'],
+    figure:
+      'It is standing at reception. I have documented it on every floor. It has documented me for longer. Logged. I am no longer certain which of us is filing this.',
     schedule: [
       'LOWER LOBBY · SCHEDULE ENDS HERE',
       'FLOOR −05 IS THE LAST FLOOR',
@@ -497,7 +607,7 @@ export const FLOORS: FloorSpec[] = [
 ##.####.####.##
 #..M..#.#..N..#
 #w....#.#....q#
-#..c..#.#....k#
+#..c..#x#....k#
 #.....#.#.....#
 ##.####.####.##
 #.....p.......#
@@ -518,6 +628,7 @@ export const FLOORS: FloorSpec[] = [
       p: { role: 'footprints', facing: 'n', absentWhenNormal: true },
       d: { role: 'chair', facing: 'n' },
       D: { role: 'chair', facing: 'n' },
+      x: { role: 'door', facing: 'e', absentWhenNormal: true },
       e: {
         role: 'notice',
         facing: 's',
@@ -555,6 +666,24 @@ export const FLOORS: FloorSpec[] = [
         entry:
           'Footprints circle the waiting benches and stop directly behind where I am standing to write this sentence.',
         toast: 'logged: they stop behind me',
+      },
+      {
+        id: 'f5-clock',
+        type: 'backward-clock',
+        tier: 2,
+        anchor: 'k',
+        entry:
+          'The clock in the east waiting room is running backward and it is running fast. It passed 4:17 while I watched. It did not stop.',
+        toast: 'logged: past 4:17, going back',
+      },
+      {
+        id: 'f5-door',
+        type: 'extra-door',
+        tier: 1,
+        anchor: 'x',
+        entry:
+          'A door in the west wall of the central passage. It is not on the blueprint. It is not on the fire plan. It is the only door on this floor that is not locked, and I have not opened it.',
+        toast: 'logged: the one door that is not locked',
       },
       {
         id: 'f5-ledger',

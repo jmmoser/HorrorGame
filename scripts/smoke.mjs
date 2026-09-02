@@ -135,6 +135,29 @@ for (let floor = 1; floor <= 5; floor++) {
     if (bump.steps > 1) errors.push(`floor 1: ${bump.steps} footsteps while blocked by a prop`);
   }
 
+  // floor 2: the figure is a finding. summon it into view, file it, and it
+  // must count toward the quota and leave the floor
+  if (floor === 2) {
+    const fig = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      const at = d.summon(4, 9);
+      await new Promise((r) => setTimeout(r, 300));
+      const before = d.presence().state;
+      d.logFigure();
+      return {
+        at,
+        before,
+        after: d.presence().state,
+        logged: d.save.logged.includes('f2-figure'),
+        entry: d.save.ledger.find((e) => e.id === 'f2-figure')?.text.slice(0, 50) ?? null,
+      };
+    });
+    console.log(`floor 2 figure: summoned=${JSON.stringify(fig.at)} ${fig.before}→${fig.after} logged=${fig.logged}`);
+    if (!fig.at) errors.push('floor 2: could not summon the figure');
+    if (!fig.logged || !fig.entry) errors.push('floor 2: documenting the figure wrote nothing');
+    if (fig.after !== 'gone') errors.push(`floor 2: figure still ${fig.after} after being filed`);
+  }
+
   await page.evaluate(() => window.__game.debug.logAllTargets());
   await page.waitForTimeout(600);
   const callActive = await page.evaluate(() => window.__game.debug.built.elevator.callActive);
@@ -142,13 +165,47 @@ for (let floor = 1; floor <= 5; floor++) {
     errors.push(`floor ${floor}: call button not active after logging all targets`);
     break;
   }
+
+  // floor 4: contact has a cost. five targets over a quota of four: one
+  // contact tears a page and the button stays lit; a second takes it dark;
+  // documenting again lights it back
+  if (floor === 4) {
+    const tear = await page.evaluate(async () => {
+      const d = window.__game.debug;
+      const el = d.built.elevator;
+      d.contact();
+      await new Promise((r) => setTimeout(r, 200));
+      const afterOne = { torn: d.tornEntries(), lit: el.callActive, logged: d.save.logged.length };
+      d.contact();
+      await new Promise((r) => setTimeout(r, 200));
+      const afterTwo = { torn: d.tornEntries(), lit: el.callActive };
+      d.logAllTargets();
+      await new Promise((r) => setTimeout(r, 200));
+      const relogged = { lit: el.callActive, entries: d.save.ledger.length };
+      return { afterOne, afterTwo, relogged };
+    });
+    console.log(`floor 4 tearing: ${JSON.stringify(tear)}`);
+    if (tear.afterOne.torn !== 1 || !tear.afterOne.lit) errors.push('floor 4: first contact should tear one page and leave the button lit');
+    if (tear.afterTwo.torn !== 2 || tear.afterTwo.lit) errors.push('floor 4: second contact should take the call button dark');
+    if (!tear.relogged.lit) errors.push('floor 4: re-documenting torn targets should relight the button');
+  }
+
   await page.evaluate(() => window.__game.debug.depart());
 }
 
-// the ending
+// the ending: sealed in the car while the counter counts and the ledger is
+// taken one entry at a time, then the card
 await page.waitForFunction(() => window.__game?.debug.state === 'ending', { timeout: 150000 });
+await page.waitForTimeout(2500);
+await page.screenshot({ path: 'scratch/ending-car.png' });
+await page.waitForSelector('#btn-end-new', { timeout: 90000 }).catch(() => {
+  errors.push('ending card never appeared');
+});
 await page.waitForTimeout(1500);
 await page.screenshot({ path: 'scratch/ending.png' });
+const rewritten = await page.evaluate(() => window.__game.debug.save.ledger.filter((e) => e.altered).length);
+console.log(`ending: ${rewritten} entries rewritten by the car`);
+if (rewritten < 4) errors.push(`ending: only ${rewritten} entries rewritten`);
 
 const finalSave = await page.evaluate(() => {
   const d = window.__game.debug;

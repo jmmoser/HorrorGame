@@ -159,6 +159,28 @@ body {
   letter-spacing: 0.1em;
 }
 
+/* the floor's quota, under the depth: the one number the player is working to */
+#quota-line {
+  position: absolute;
+  top: calc(3.6rem + env(safe-area-inset-top));
+  left: calc(1rem + env(safe-area-inset-left));
+  font-size: 0.5rem;
+  letter-spacing: 0.3em;
+  color: rgba(216, 210, 196, 0.38);
+  transition: color 0.6s;
+}
+
+#quota-line.met {
+  color: rgba(216, 210, 196, 0.7);
+}
+
+.title-controls {
+  margin-top: 1.6rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  color: #6b6559;
+}
+
 #reticle {
   position: absolute;
   top: 50%;
@@ -225,6 +247,20 @@ body {
   letter-spacing: 0.18em;
   line-height: 1.9;
   color: rgba(216, 210, 196, 0.5);
+}
+
+/* the field procedure, ruled off under the schedule on the first floor */
+.card-procedure {
+  color: rgba(216, 210, 196, 0.72);
+}
+
+.card-procedure-head {
+  margin-top: 0.7rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(216, 210, 196, 0.22);
+  color: rgba(216, 210, 196, 0.45);
+  font-size: 0.5rem;
+  letter-spacing: 0.3em;
 }
 
 #ledger-tab {
@@ -367,6 +403,21 @@ body {
 }
 
 .entry.altered .entry-meta {
+  color: #8a4a3a;
+}
+
+/* a page the figure took: the stub is numbered, the words are struck through */
+.entry.torn {
+  color: #8a8474;
+}
+
+.entry.torn > div:last-child {
+  text-decoration: line-through;
+  text-decoration-color: rgba(122, 32, 32, 0.6);
+  opacity: 0.55;
+}
+
+.entry.torn .entry-meta {
   color: #8a4a3a;
 }
 

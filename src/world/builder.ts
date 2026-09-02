@@ -130,6 +130,7 @@ export class ElevatorRig {
   private doorR: THREE.Mesh;
   private buttonLamp: THREE.MeshStandardMaterial;
   private carLight: THREE.PointLight;
+  private lightPanelMat: THREE.MeshStandardMaterial;
   /** 0 closed .. 1 open */
   private openness = 1;
   private targetOpenness = 1;
@@ -161,10 +162,12 @@ export class ElevatorRig {
     this.carLight = new THREE.PointLight(0xffe6c0, 5, 6, 1.6);
     this.carLight.position.set(el.cx, 2.1, el.cz);
     this.group.add(this.carLight);
-    const lightPanel = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.8, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffe2b8, emissiveIntensity: 1.2 }),
-    );
+    this.lightPanelMat = new THREE.MeshStandardMaterial({
+      color: 0x111111,
+      emissive: 0xffe2b8,
+      emissiveIntensity: 1.2,
+    });
+    const lightPanel = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.5), this.lightPanelMat);
     lightPanel.rotation.x = Math.PI / 2;
     // keep clear of the roof plate's underside (y=2.23) or the two z-fight
     lightPanel.position.set(el.cx, 2.2, el.cz);
@@ -223,6 +226,13 @@ export class ElevatorRig {
   setCallActive(active: boolean) {
     this.callActive = active;
     this.buttonLamp.emissiveIntensity = active ? 1.8 : 0;
+  }
+
+  /** the car's one warm light, 0..1 — the ending is allowed to take it away */
+  setCarLight(level: number) {
+    const v = Math.max(0, Math.min(1, level));
+    this.carLight.intensity = 5 * v;
+    this.lightPanelMat.emissiveIntensity = 1.2 * v;
   }
 
   openDoors() {
